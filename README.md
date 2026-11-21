@@ -2,9 +2,13 @@
 
 Compiled C++17 pipeline for the Builders Buildathon Shopping Sessions track. The native engine reads LF-delimited CSV, resolves identities, keeps the earliest event copy, and aggregates in shopper order. DuckDB writes the final Parquet files. Build with `make parser` or use the root Dockerfile. Without the compiled binary, the Python entry point uses the SQL implementation.
 
+## Official practice result
+
+The [submitted compact-identity commit](https://github.com/shreyas8182/databricks-shopping-sessions/commit/8b340ce33e1fb9efb7ab91bf07f980244bf7a4e6) scored **6.83 s**, improving on the previous **37.43 s** by **5.48x**. On November 21 the practice board showed 235th of 258 teams when checked. The contest selected this entry for the final, which is scored separately on new input.
+
 ## Native checkpoint
 
-The scored SQL baseline at `2d0c3f8` earned **37.43 s** in hidden practice. On the local Apple machine, three runs of the compiled path took 3.069 / 2.906 / 2.922 s for 20M events (seed 42) and 12.328 / 8.667 / 8.630 s for 60M (seed 7). Both complete tables matched the baseline at each scale in duplicate-sensitive comparisons. Local timings include process startup and Parquet close. Page caches were not reset. This candidate has no official score.
+The scored SQL baseline at `2d0c3f8` earned **37.43 s** in hidden practice. On the local Apple machine, three runs of the compiled path took 3.069 / 2.906 / 2.922 s for 20M events (seed 42) and 12.328 / 8.667 / 8.630 s for 60M (seed 7). Both complete tables matched the baseline at each scale in duplicate-sensitive comparisons. Local timings include process startup and Parquet close. Page caches were not reset. This first native checkpoint was benchmarked locally.
 
 ### Compact identity index
 
