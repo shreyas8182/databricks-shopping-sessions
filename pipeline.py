@@ -132,14 +132,13 @@ def run(data, output, scratch):
         AND ingest-t <= {DAY}; DROP TABLE dedup''')
     stage('sessions', '''CREATE TABLE session_events AS
       WITH gaps AS (SELECT *, t-lag(t) OVER (PARTITION BY person ORDER BY t) gap FROM valid)
-      SELECT *,sum(CASE WHEN gap IS NULL OR gap>1800000 THEN 1 ELSE 0 END)
-        OVER (PARTITION BY person ORDER BY t RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) sid FROM gaps;
-      CREATE TABLE sessions AS SELECT person,sid,min(t) start_ms,
-        CAST(epoch_ms(min(t)) AS DATE) AS day,count(*)::BIGINT events,sum(cents)::BIGINT revenue_cents
-        FROM session_events GROUP BY person,sid; DROP TABLE valid''')
+      SELECT *,max(CASE WHEN gap IS NULL OR gap>1800000 THEN t END)
+        OVER (PARTITION BY person ORDER BY t RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) start_ms FROM gaps;
+      CREATE TABLE sessions AS SELECT person,start_ms,
+        CAST(epoch_ms(start_ms) AS DATE) AS day,count(*)::BIGINT events,sum(cents)::BIGINT revenue_cents
+        FROM session_events GROUP BY person,start_ms; DROP TABLE valid''')
     stage('clicks',f'''CREATE TABLE valid_clicks AS
-      WITH d AS (SELECT * FROM clicks WHERE click_id IS NOT NULL QUALIFY row_number() OVER (PARTITION BY click_id)=1),
-      p AS (SELECT *,timestamp_ms(ts) t FROM d)
+      WITH p AS (SELECT *,timestamp_ms(ts) t FROM clicks WHERE click_id IS NOT NULL)
       SELECT coalesce(i.person,c.user_id) person,click_id,campaign_id,t
       FROM p c JOIN campaigns USING(campaign_id) LEFT JOIN identities i ON c.user_id=i.id
       WHERE user_id IS NOT NULL AND t >= {lo-WEEK} AND t < {hi}; DROP TABLE clicks;
@@ -158,8 +157,8 @@ def run(data, output, scratch):
       FROM sessions s JOIN intervals i ON s.person=i.person AND s.start_ms>=i.first_ms AND s.start_ms<=i.last_ms
       GROUP BY campaign_id,day''')
     stage('aggregate', '''CREATE TABLE user_daily AS
-      WITH category_totals AS (SELECT e.person,s.day,e.category,sum(e.cents) revenue
-        FROM session_events e JOIN sessions s USING(person,sid) WHERE e.cents>0 GROUP BY e.person,s.day,e.category),
+      WITH category_totals AS (SELECT person,CAST(epoch_ms(start_ms) AS DATE) AS day,category,sum(cents) revenue
+        FROM session_events WHERE cents>0 GROUP BY ALL),
       top AS (SELECT person,day,category FROM category_totals QUALIFY row_number() OVER (PARTITION BY person,day ORDER BY revenue DESC,category)=1),
       daily AS (SELECT person,day,count(*)::BIGINT sessions,sum(events)::BIGINT events,sum(revenue_cents)::BIGINT revenue_cents FROM sessions GROUP BY person,day)
       SELECT person user_id,day,sessions,events,revenue_cents,category top_category FROM daily LEFT JOIN top USING(person,day);
