@@ -18,6 +18,7 @@ Exact-rule DuckDB baseline for the Builders Buildathon shopping-sessions track.
 Use Python 3.12. Install `requirements.txt`, then:
 
 ```sh
+make parser  # requires a C++17 compiler
 python pipeline.py /path/to/data /path/to/output --scratch /path/to/scratch
 ```
 
@@ -46,7 +47,7 @@ This command is a rehearsal recipe, not evidence of a completed container test. 
 7. Assists use merged inclusive seven-day coverage intervals for every campaign.
 8. Typed Parquet daily tables include assist-only campaign rows and null categories when appropriate.
 
-Initial tradeoffs: whole-file text splitting, Python link processing, and window-sort event dedup prioritize a testable baseline. Profile and bound memory before final-scale use. The independent oracle must not reuse these SQL transformations.
+The C++17 helper strictly validates and normalizes CSV with bounded streaming memory. DuckDB reads the normalized scratch file, which is deleted after ingestion. Python link processing and window-sort event dedup remain optimization opportunities. Without the helper, a slower SQL ingestion fallback is available; build the helper for scale runs. The independent oracle does not reuse production parsing or SQL transformations.
 
 ## Validation
 
@@ -76,3 +77,14 @@ python validate.py --fixtures /path/to/starter-duckdb/fixtures \
 ## Development history
 
 The first fixture-passing commit exposed excessive memory use during the first 1M test. Replacing correlated line expansion with a projected expansion fixed it. A separate review also tightened clock validation so DuckDB cannot normalize hour 24 or second 60. The corrected 1M pipeline took about 2 seconds on the local Apple-silicon development machine; this is not a contest-hardware benchmark.
+
+## Scale measurements
+
+Local Apple-silicon measurements; these are not contest-hardware scores.
+
+| Input | Version | Pipeline wall time | Peak reported RSS |
+| --- | --- | --- | --- |
+| 20M events, 5M clicks, seed 42 | SQL text ingestion | 100.5 s | not recorded |
+| 20M events, 5M clicks, seed 42 | Streaming C++ CSV normalization | 15.1 s | 9.04 GB |
+
+The native parser reduced event ingestion from 85.6 s to 4.8 s. Both versions produced output; final-scale limits and hidden-data correctness require further checks. The 60M test is in progress. GitHub Actions runs official fixtures, differential cases, and the official 1M answer comparison inside a Linux amd64, read-only, network-isolated container. The CI runner uses 2 CPUs and a 5GB container cap, not the contest's full resources.

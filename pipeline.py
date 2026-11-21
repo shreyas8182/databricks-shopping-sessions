@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import subprocess
 import time
 import duckdb
 
@@ -59,21 +60,34 @@ def identity_map(data):
             smallest[r] = name
     return ((name, smallest[root(name)]) for name in parent)
 
-def load_strict(con, data, name, columns):
+def load_strict(con, data, name, columns, scratch):
     width = len(columns)
+    parser = Path(__file__).with_name('parse_csv')
+    if parser.is_file():
+        paths = sorted((data / name).glob('*.csv'))
+        normalized = scratch / (name + '-normalized.csv')
+        con.execute(f'CREATE TABLE {name} (' + ','.join(f'{c} VARCHAR' for c in columns) + ')')
+        if paths:
+            subprocess.run([str(parser.resolve()), str(width), str(normalized), *map(str,paths)], check=True)
+            if normalized.stat().st_size:
+                schema = '{' + ','.join(quote(c) + ": 'VARCHAR'" for c in columns) + '}'
+                con.execute(f"INSERT INTO {name} SELECT * FROM read_csv({quote(normalized)}, header=false, auto_detect=false, columns={schema}, delim=',', quote='\"', escape='\"', new_line='\\n', nullstr='', strict_mode=true)")
+            normalized.unlink()
+        return
     pattern = ','.join(['(?:"[^",]*"|[^",]*)'] * width)
     paths = sorted((data / name).glob('*.csv'))
     if not paths:
         con.execute(f'CREATE TABLE {name} (' + ','.join(f'{c} VARCHAR' for c in columns) + ')')
         return
-    paths_sql = '[' + ','.join(quote(p) for p in paths) + ']'
     fields = ','.join(f"NULLIF(CASE WHEN starts_with(f[{i+1}], '\"') THEN substr(f[{i+1}], 2, length(f[{i+1}])-2) ELSE f[{i+1}] END, '') AS {c}" for i,c in enumerate(columns))
     # read_text avoids stock CSV readers repairing CRLF or stray quotes.
-    con.execute(f'''CREATE TABLE {name} AS
+    con.execute(f'CREATE TABLE {name} (' + ','.join(f'{c} VARCHAR' for c in columns) + ')')
+    for path in paths:
+      con.execute(f'''INSERT INTO {name}
       SELECT {fields} FROM (
         SELECT string_split(line, ',') f FROM (
           SELECT unnest(string_split(content, chr(10))) line,
-            generate_subscripts(string_split(content, chr(10)), 1) n FROM read_text({paths_sql})
+            generate_subscripts(string_split(content, chr(10)), 1) n FROM read_text({quote(path)})
         ) WHERE n > 1 AND regexp_full_match(line, {quote(pattern)})
       )''')
 
@@ -102,7 +116,7 @@ def run(data, output, scratch):
         w=csv.writer(f); w.writerow(['id','person']); w.writerows(identity_map(data))
     con.execute(f"INSERT INTO identities SELECT * FROM read_csv({quote(mapping)}, header=true, all_varchar=true)")
     for table, columns in [('events',['event_id','user_id','ts','ingest_ts','event_type','product_id','price_cents']), ('clicks',['click_id','user_id','campaign_id','ts'])]:
-        t=time.perf_counter();load_strict(con,data,table,columns);print(f'read {table}: {time.perf_counter()-t:.3f}s',file=sys.stderr)
+        t=time.perf_counter();load_strict(con,data,table,columns,scratch);print(f'read {table}: {time.perf_counter()-t:.3f}s',file=sys.stderr)
     for table in ['products','campaigns']:
         con.execute(f'CREATE TABLE {table} AS SELECT * FROM read_csv({quote(data / (table+".csv"))}, header=true, all_varchar=true)')
     stage('dedup', '''CREATE TABLE dedup AS SELECT * FROM events WHERE event_id IS NOT NULL
