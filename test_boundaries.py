@@ -26,6 +26,14 @@ class BoundaryTests(unittest.TestCase):
         check(self.case('e,u\rx,2026-10-03T10:00:00Z,2026-10-03T10:00:00Z,view,p1,\n',links='a,u\rx\n'))
     def test_leading_zero_timestamp_and_price(self):
         check(self.case('e,u,0000000000000000000000000001791021600000,2026-10-03T10:00:00Z,purchase,p1,00000000000000000000000000000000010\n'))
+    def test_short_and_long_identity_keys(self):
+        ids = ['abc', 'abc ', 'abcdefgh', 'abcdefghi', 'abcdefghijkl',
+               'abcdefghijkl-1', 'abcdefghijkl-2', 'ユーザーA']
+        events = ''.join(f'e{i},{name},2026-10-03T10:00:00Z,2026-10-03T10:00:00Z,view,p1,\n'
+                         for i, name in enumerate(ids))
+        links = ''.join(f'{name},alias-{i}\n' for i, name in enumerate(ids))
+        check(self.case(events, links=links))
+
     def test_cross_file_winner_and_duplicate_click_expiry(self):
         data = self.case(
             'same,other,2026-10-08T10:00:00Z,2026-10-08T10:01:00Z,view,p1,\n'

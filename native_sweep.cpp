@@ -127,7 +127,7 @@ void process(size_t bucket, std::vector<Buckets<Event>>& events_by_id,
     });
 
     Writer users(scratch/("user-"+std::to_string(bucket)+".csv"));
-    std::map<std::pair<Millis,int>,Credit> campaigns;
+    std::unordered_map<Millis,std::unordered_map<int,Credit>> campaigns;
     std::unordered_map<int,int64_t> category_totals;
     std::unordered_map<int,unsigned> active;
     size_t e=0, next=0;
@@ -163,7 +163,8 @@ void process(size_t bucket, std::vector<Buckets<Event>>& events_by_id,
                 if (--it->second==0) active.erase(it);
             }
             int winner=oldest==next ? 0 : clicks[next-1].campaign;
-            for (const auto& pair : active) ++campaigns[{day,pair.first}].assists;
+            auto& day_campaigns=campaigns[day];
+            for (const auto& pair : active) ++day_campaigns[pair.first].assists;
             Millis prev;
             int64_t revenue=0;
             ++daily.sessions;
@@ -174,15 +175,14 @@ void process(size_t bucket, std::vector<Buckets<Event>>& events_by_id,
                 prev=sale.t;
             } while (e<events.size() && events[e].person==person && events[e].sale.t-prev<=1800000);
             daily.revenue+=revenue;
-            auto& credit=campaigns[{day,winner}];
+            auto& credit=day_campaigns[winner];
             ++credit.sessions; credit.purchases+=revenue>0; credit.revenue+=revenue;
         }
         finish_day();
     }
     users.close();
     Writer ads(scratch/("campaign-"+std::to_string(bucket)+".csv"));
-    for (const auto& [key,counts] : campaigns) {
-        auto [day, index]=key;
+    for (const auto& [day, totals] : campaigns) for (const auto& [index, counts] : totals) {
         ads.text(dim.campaign_names[index]); ads.comma(); ads.text(dim.channels[index]); ads.comma();
         ads.number(day); ads.comma(); ads.number(counts.sessions); ads.comma(); ads.number(counts.purchases);
         ads.comma(); ads.number(counts.revenue); ads.comma(); ads.number(counts.assists); ads.line();

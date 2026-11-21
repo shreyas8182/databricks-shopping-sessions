@@ -6,6 +6,15 @@ Compiled C++17 pipeline for the Builders Buildathon Shopping Sessions track. The
 
 The scored SQL baseline at `2d0c3f8` earned **37.43 s** in hidden practice. On the local Apple machine, three runs of the compiled path took 3.069 / 2.906 / 2.922 s for 20M events (seed 42) and 12.328 / 8.667 / 8.630 s for 60M (seed 7). Both complete tables matched the baseline at each scale in duplicate-sensitive comparisons. Local timings include process startup and Parquet close. Page caches were not reset. This candidate has no official score.
 
+### Compact identity index
+
+The next checkpoint stores up to 12 identifier bytes inline with an explicit length and compares longer identifiers in full. It groups campaign counters by day. The local comparison used the same two inputs and produced identical tables.
+
+- 20M events: 2.939 s / 2.35 s / 2.352 s (median 2.352 s).
+- 60M events: 8.324 s / 6.686 s / 6.689 s (median 6.689 s).
+
+The benchmark reports the largest individual process RSS across the parent and its children. Whole-container memory also includes file cache and other simultaneous usage.
+
 ## SQL reference validation
 
 - Official rules downloaded and read November 21, 2026.

@@ -157,14 +157,69 @@ inline Millis timestamp(Text s) {
     return days*day_ms+((h*60+min-offset)*60+sec)*1000LL;
 }
 
+// Store short names inline and use the full mapped bytes for longer names.
+// Length is part of the key, including when the name contains zero bytes.
+class NameIndex {
+    struct Slot {
+        uint64_t head = 0;
+        uint32_t tail = 0;
+        uint32_t size = 0;
+        unsigned id = 0;
+    };
+    std::vector<Slot> table;
+    std::unordered_map<Text,unsigned> long_names;
+    size_t occupied = 0;
+    static Slot pack(Text s) {
+        Slot key;
+        key.size = s.size();
+        std::memcpy(&key.head, s.data(), std::min<size_t>(8,s.size()));
+        if (s.size()>8) std::memcpy(&key.tail,s.data()+8,s.size()-8);
+        return key;
+    }
+    size_t position(const Slot& key) const {
+        uint64_t h = key.head ^ (uint64_t(key.tail) * 0x9e3779b97f4a7c15ULL);
+        h ^= h >> 33;
+        h *= 0xff51afd7ed558ccdULL;
+        h ^= h >> 33;
+        size_t i = h & (table.size()-1);
+        while (table[i].size && (table[i].head!=key.head || table[i].tail!=key.tail || table[i].size!=key.size))
+            i=(i+1)&(table.size()-1);
+        return i;
+    }
+    void grow() {
+        std::vector<Slot> old;
+        old.swap(table);
+        table.resize(std::max<size_t>(32,old.size()*2));
+        for (const auto& slot : old) if (slot.size) table[position(slot)]=slot;
+    }
+public:
+    NameIndex() {grow();}
+    unsigned insert(Text name, unsigned proposed) {
+        if (name.size()>12) return long_names.emplace(name,proposed).first->second;
+        if ((occupied+1)*10 > table.size()*7) grow();
+        Slot key=pack(name);
+        auto& slot=table[position(key)];
+        if (!slot.size) {key.id=proposed; slot=key; ++occupied;}
+        return slot.id;
+    }
+    unsigned lookup(Text name) const {
+        if (name.size()>12) {
+            auto it=long_names.find(name);
+            return it==long_names.end() ? UINT32_MAX : it->second;
+        }
+        const auto& slot=table[position(pack(name))];
+        return slot.size ? slot.id : UINT32_MAX;
+    }
+};
+
 class Identities {
-    std::unordered_map<Text,unsigned> index;
+    NameIndex index;
     std::vector<unsigned> parent, weight;
     std::vector<Text> smallest;
     unsigned add(Text id) {
-        auto [it, fresh]=index.emplace(id,parent.size());
-        if (fresh) { parent.push_back(it->second); weight.push_back(1); smallest.push_back(id); }
-        return it->second;
+        unsigned i=index.insert(id,parent.size());
+        if (i==parent.size()) { parent.push_back(i); weight.push_back(1); smallest.push_back(id); }
+        return i;
     }
     unsigned root(unsigned i) {
         while (i!=parent[i]) {parent[i]=parent[parent[i]]; i=parent[i];}
@@ -179,10 +234,10 @@ public:
             if (weight[a]<weight[b]) std::swap(a,b);
             parent[b]=a; weight[a]+=weight[b]; smallest[a]=std::min(smallest[a],smallest[b]);
         });
-        for (auto& pair : index) pair.second=root(pair.second);
+        for (unsigned i=0; i<parent.size(); ++i) parent[i]=root(i);
     }
     Text person(Text id) const {
-        auto it=index.find(id);
-        return it==index.end() ? id : smallest[it->second];
+        unsigned i=index.lookup(id);
+        return i==UINT32_MAX ? id : smallest[parent[i]];
     }
 };
