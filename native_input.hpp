@@ -157,87 +157,120 @@ inline Millis timestamp(Text s) {
     return days*day_ms+((h*60+min-offset)*60+sec)*1000LL;
 }
 
-// Store short names inline and use the full mapped bytes for longer names.
-// Length is part of the key, including when the name contains zero bytes.
-class NameIndex {
-    struct Slot {
-        uint64_t head = 0;
-        uint32_t tail = 0;
-        uint32_t size = 0;
-        unsigned id = 0;
+using Key = uint64_t;
+inline uint64_t key_hash(Key key) {
+    key ^= key >> 31;
+    key *= 0x9e3779b97f4a7c15ULL;
+    return key ^ (key >> 33);
+}
+
+// Ordinary short ASCII suffixes fit in one word. All exceptional byte strings
+// are interned by their complete value in a disjoint key space.
+class Keys {
+    struct Extra {
+        std::mutex lock;
+        std::unordered_map<Text,uint64_t> ids;
+        std::vector<Text> bytes;
     };
-    std::vector<Slot> table;
-    std::unordered_map<Text,unsigned> long_names;
-    size_t occupied = 0;
-    static Slot pack(Text s) {
-        Slot key;
-        key.size = s.size();
-        std::memcpy(&key.head, s.data(), std::min<size_t>(8,s.size()));
-        if (s.size()>8) std::memcpy(&key.tail,s.data()+8,s.size()-8);
-        return key;
+    std::array<Extra,64> extras;
+    char prefix;
+    static constexpr Key indirect=1ULL<<63;
+public:
+    explicit Keys(char prefix) : prefix(prefix) {}
+    Key encode(Text s) {
+        if (s.size()>=2 && s.size()<=9 && s.front()==prefix) {
+            size_t n=s.size()-1;
+            Key word=0;
+            if (n==8) std::memcpy(&word,s.data()+1,8);
+            else std::memcpy(&word,s.data()+1,n);
+            constexpr Key high=0x8080808080808080ULL;
+            Key padded=word;
+            if (n<8) padded |= (~Key{0})<<(8*n);
+            if (!(word&high) && !((padded-0x0101010101010101ULL)&~padded&high)) return word;
+        }
+        auto lane=std::hash<Text>{}(s)%extras.size();
+        auto& extra=extras[lane];
+        std::lock_guard<std::mutex> lock(extra.lock);
+        auto [it,fresh]=extra.ids.emplace(s,extra.bytes.size());
+        if (fresh) extra.bytes.push_back(s);
+        return indirect | (it->second<<6) | lane;
     }
-    size_t position(const Slot& key) const {
-        uint64_t h = key.head ^ (uint64_t(key.tail) * 0x9e3779b97f4a7c15ULL);
-        h ^= h >> 33;
-        h *= 0xff51afd7ed558ccdULL;
-        h ^= h >> 33;
-        size_t i = h & (table.size()-1);
-        while (table[i].size && (table[i].head!=key.head || table[i].tail!=key.tail || table[i].size!=key.size))
-            i=(i+1)&(table.size()-1);
+    // Call after all encoders have joined. The caller owns short-key storage.
+    Text decode(Key k, std::array<char,9>& buf) const {
+        if (k&indirect) return extras[k&63].bytes[(k&~indirect)>>6];
+        buf[0]=prefix;
+        std::memcpy(buf.data()+1,&k,8);
+        return Text(buf.data(),1+(64-__builtin_clzll(k)+7)/8);
+    }
+};
+
+class Index {
+    struct Slot {Key key=0; unsigned id=0;};
+    std::vector<Slot> slots;
+    unsigned count=0;
+    size_t position(Key k) const {
+        size_t i=key_hash(k)&(slots.size()-1);
+        while (slots[i].key && slots[i].key!=k) i=(i+1)&(slots.size()-1);
         return i;
     }
-    void grow() {
-        std::vector<Slot> old;
-        old.swap(table);
-        table.resize(std::max<size_t>(32,old.size()*2));
-        for (const auto& slot : old) if (slot.size) table[position(slot)]=slot;
+    void resize(size_t n) {
+        std::vector<Slot> old(n);
+        slots.swap(old);
+        for (auto v : old) if (v.key) slots[position(v.key)]=v;
     }
 public:
-    NameIndex() {grow();}
-    unsigned insert(Text name, unsigned proposed) {
-        if (name.size()>12) return long_names.emplace(name,proposed).first->second;
-        if ((occupied+1)*10 > table.size()*7) grow();
-        Slot key=pack(name);
-        auto& slot=table[position(key)];
-        if (!slot.size) {key.id=proposed; slot=key; ++occupied;}
+    explicit Index(size_t hint=0) {
+        size_t n=32; while(n<hint+hint/2) n*=2;
+        slots.resize(n);
+    }
+    unsigned insert(Key k) {
+        if ((count+1)*10>slots.size()*7) resize(slots.size()*2);
+        auto& slot=slots[position(k)];
+        if (!slot.key) slot={k,count++};
         return slot.id;
     }
-    unsigned lookup(Text name) const {
-        if (name.size()>12) {
-            auto it=long_names.find(name);
-            return it==long_names.end() ? UINT32_MAX : it->second;
-        }
-        const auto& slot=table[position(pack(name))];
-        return slot.size ? slot.id : UINT32_MAX;
+    unsigned lookup(Key k) const {
+        auto slot=slots[position(k)];
+        return slot.key ? slot.id : UINT32_MAX;
     }
 };
 
 class Identities {
-    NameIndex index;
-    std::vector<unsigned> parent, weight;
+    Index index;
+    std::vector<unsigned> parent,weight;
     std::vector<Text> smallest;
-    unsigned add(Text id) {
-        unsigned i=index.insert(id,parent.size());
-        if (i==parent.size()) { parent.push_back(i); weight.push_back(1); smallest.push_back(id); }
+    std::vector<Key> canonical;
+    unsigned add(Key key, Text name) {
+        unsigned i=index.insert(key);
+        if (i==parent.size()) {
+            parent.push_back(i); weight.push_back(1); smallest.push_back(name); canonical.push_back(key);
+        }
         return i;
     }
     unsigned root(unsigned i) {
         while (i!=parent[i]) {parent[i]=parent[parent[i]]; i=parent[i];}
         return i;
     }
+    static size_t hint(const std::vector<Text>& blocks) {
+        size_t total=0; for (auto b:blocks) total+=b.size();
+        return std::min<size_t>(total/16,4000000);
+    }
 public:
-    explicit Identities(const std::vector<Text>& chunks) {
-        for (Text block : chunks) scan<2>(block,[&](const auto& f) {
+    Identities(const std::vector<Text>& blocks, Keys& names) : index(hint(blocks)) {
+        for (Text block:blocks) scan<2>(block,[&](const auto& f){
             if (f[0].empty() || f[1].empty()) return;
-            unsigned a=root(add(f[0])), b=root(add(f[1]));
+            unsigned a=root(add(names.encode(f[0]),f[0])), b=root(add(names.encode(f[1]),f[1]));
             if (a==b) return;
             if (weight[a]<weight[b]) std::swap(a,b);
-            parent[b]=a; weight[a]+=weight[b]; smallest[a]=std::min(smallest[a],smallest[b]);
+            parent[b]=a; weight[a]+=weight[b];
+            if (smallest[b]<smallest[a]) {smallest[a]=smallest[b]; canonical[a]=canonical[b];}
         });
-        for (unsigned i=0; i<parent.size(); ++i) parent[i]=root(i);
+        for (unsigned i=0;i<parent.size();++i) canonical[i]=canonical[root(i)];
+        std::vector<Text>().swap(smallest); std::vector<unsigned>().swap(weight);
+        std::vector<unsigned>().swap(parent);
     }
-    Text person(Text id) const {
-        unsigned i=index.lookup(id);
-        return i==UINT32_MAX ? id : smallest[parent[i]];
+    Key person(Key key) const {
+        unsigned id=index.lookup(key);
+        return id==UINT32_MAX ? key : canonical[id];
     }
 };

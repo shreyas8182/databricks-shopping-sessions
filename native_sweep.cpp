@@ -1,10 +1,10 @@
-#include "native_input.hpp"
+#include "parquet_output.hpp"
 #include <map>
 #include <tuple>
 
 namespace {
 constexpr size_t shards=64;
-size_t shard(Text key) { return std::hash<Text>{}(key) % shards; }
+size_t shard(Key key) { return key_hash(key) % shards; }
 
 struct Dimensions {
     std::unordered_map<Text,int> products, campaigns;
@@ -24,112 +24,139 @@ struct Dimensions {
 };
 
 struct Sale { Millis t; int cents, category; };
-struct Candidate { Text id, user; Millis ingest; Sale sale; };
-struct Click { Text user, id; Millis t; int campaign; };
-struct Event { Text person; Sale sale; };
+struct Ticket { Key id; Millis ingest; uint32_t row, block; };
+struct Click { Key user; Text id; Millis t; int campaign; };
+struct Event { Key person; Sale sale; };
 template<class Row> using Buckets=std::array<std::vector<Row>,shards>;
+struct EventBlock { Buckets<Event> events; Buckets<Ticket> tickets; };
 
-void read_events(Text block, Buckets<Candidate>& dst, const Dimensions& dim, Millis lo, Millis hi) {
-    scan<7>(block,[&](const auto& f){
+void read_events(Text input, uint32_t block, EventBlock& dst, const Dimensions& dim,
+                 Keys& users, Keys& ids, const Identities& links, Millis lo, Millis hi) {
+    scan<7>(input,[&](const auto& f){
         if (f[0].empty()) return;
+        Key id=ids.encode(f[0]);
         Millis t=timestamp(f[2]), ingest=timestamp(f[3]);
-        Sale sale{invalid_time,0,0};
+        uint32_t row=UINT32_MAX;
         if (t>=lo && t<hi && ingest!=invalid_time && ingest-t<=day_ms && !f[1].empty() && !f[5].empty()) {
+            Sale sale{t,0,0};
             if (f[4]=="purchase") {
                 Millis price=decimal(f[6]);
                 if (price>=1 && price<=10000000) {
                     auto it=dim.products.find(f[5]);
-                    sale={t,int(price),it==dim.products.end() ? 0 : it->second};
-                }
-            } else if (f[4]=="view" || f[4]=="cart") sale.t=t;
+                    sale.cents=int(price); sale.category=it==dim.products.end()?0:it->second;
+                } else sale.t=invalid_time;
+            } else if (f[4]!="view" && f[4]!="cart") sale.t=invalid_time;
+            if (sale.t!=invalid_time) {
+                Key person=links.person(users.encode(f[1]));
+                size_t lane=shard(person);
+                auto& target=dst.events[lane];
+                row=uint32_t(target.size()*shards+lane);
+                target.push_back({person,sale});
+            }
         }
-        // A well-formed invalid row still competes for earliest ingest.
-        dst[shard(f[0])].push_back({f[0],f[1],ingest,sale});
+        dst.tickets[shard(id)].push_back({id,ingest,row,block});
     });
 }
 
-void dedup(size_t bucket, std::vector<Buckets<Candidate>>& blocks,
-           Buckets<Event>& survivors, const Identities& identities) {
+void dedup(size_t lane, std::vector<EventBlock>& blocks) {
     size_t count=0;
-    for (auto& block : blocks) count+=block[bucket].size();
-    size_t capacity=1;
-    while (capacity < count+count/2+1) capacity*=2;
-    std::vector<const Candidate*> winners(capacity);
-    for (auto& block : blocks) for (const auto& row : block[bucket]) {
-        size_t slot=(std::hash<Text>{}(row.id)/shards) & (capacity-1);
-        while (winners[slot] && winners[slot]->id!=row.id) slot=(slot+1)&(capacity-1);
-        if (!winners[slot] || row.ingest<winners[slot]->ingest) winners[slot]=&row;
+    for (auto& block:blocks) count+=block.tickets[lane].size();
+    size_t capacity=1; while(capacity<count+count/2+1) capacity*=2;
+    struct Winner {Key key=0; const Ticket* row=nullptr;};
+    std::vector<Winner> winners(capacity);
+    for (auto& block:blocks) for (const auto& ticket:block.tickets[lane]) {
+        size_t slot=(key_hash(ticket.id)/shards)&(capacity-1);
+        while (winners[slot].key && winners[slot].key!=ticket.id) slot=(slot+1)&(capacity-1);
+        auto& winner=winners[slot];
+        if (!winner.key) {winner={ticket.id,&ticket}; continue;}
+        const Ticket* loser=&ticket;
+        if (ticket.ingest<winner.row->ingest) std::swap(loser,winner.row);
+        // Each event belongs to exactly one ID lane. Distinct lanes can safely
+        // mark their own losers without an atomic operation on every winner.
+        if (loser->row!=UINT32_MAX)
+            blocks[loser->block].events[loser->row%shards][loser->row/shards].sale.t=invalid_time;
     }
-    for (const Candidate* row : winners) if (row && row->sale.t!=invalid_time) {
-        Text person=identities.person(row->user);
-        survivors[shard(person)].push_back({person,row->sale});
-    }
-    for (auto& block : blocks) std::vector<Candidate>().swap(block[bucket]);
+    for (auto& block:blocks) std::vector<Ticket>().swap(block.tickets[lane]);
 }
-
-// Restricted CSV values may contain CR but never a quote, comma or LF.
-class Writer {
-    std::ofstream file;
-    std::string buffer;
-public:
-    explicit Writer(const fs::path& path) : file(path,std::ios::binary) {
-        file.exceptions(std::ios::badbit|std::ios::failbit);
-        buffer.reserve(256*1024);
-    }
-    void text(Text s) { buffer.push_back('"'); buffer.append(s); buffer.push_back('"'); }
-    void number(int64_t value) {
-        char tmp[32];
-        auto r=std::to_chars(tmp,tmp+sizeof(tmp),value);
-        buffer.append(tmp,r.ptr);
-    }
-    void comma() {buffer.push_back(',');}
-    void line() {
-        buffer.push_back('\n');
-        if (buffer.size()>=128*1024) {file.write(buffer.data(),buffer.size()); buffer.clear();}
-    }
-    void close() {file.write(buffer.data(),buffer.size()); file.close();}
-};
 
 struct IndexedEvent { unsigned person; Sale sale; };
 struct IndexedClick { unsigned person; int campaign; Millis t; Text id; };
 struct Daily { int64_t sessions=0, events=0, revenue=0; };
 struct Credit { int64_t sessions=0, purchases=0, revenue=0, assists=0; };
 
-void process(size_t bucket, std::vector<Buckets<Event>>& events_by_id,
-             std::vector<Buckets<Click>>& clicks_by_file, const Dimensions& dim, const fs::path& scratch) {
-    std::unordered_map<Text,unsigned> persons;
-    std::vector<Text> names;
-    auto person_id=[&](Text person){
-        auto [it,fresh]=persons.emplace(person,names.size());
-        if (fresh) names.push_back(person);
-        return it->second;
-    };
-    std::vector<IndexedEvent> events;
-    for (auto& set : events_by_id) {
-        for (const auto& e : set[bucket]) events.push_back({person_id(e.person),e.sale});
-        std::vector<Event>().swap(set[bucket]);
+using CampaignTotals=std::unordered_map<Millis,std::unordered_map<int,Credit>>;
+
+// Most shoppers have a small number of rows. Count into contiguous
+// ranges, then sort only within the individual shopper's range.
+template<class Row,class Compare>
+void order_by_person(std::vector<Row>& rows,size_t people,Compare compare) {
+    std::vector<size_t> ends(people);
+    for (const Row& row:rows) ++ends[row.person];
+    size_t total=0;
+    for (auto& n:ends) {size_t count=n; n=total; total+=count;}
+    std::vector<Row> ordered(rows.size());
+    for (const Row& row:rows) ordered[ends[row.person]++]=row;
+    rows.swap(ordered);
+    size_t first=0;
+    for (size_t last:ends) {
+        std::sort(rows.begin()+first,rows.begin()+last,compare);
+        first=last;
     }
+}
+
+class ActiveCampaigns {
+    std::vector<unsigned> count,position;
+public:
+    std::vector<int> ids;
+    explicit ActiveCampaigns(size_t n) : count(n),position(n) {}
+    void add(int id) {
+        if (!count[id]++) {position[id]=ids.size(); ids.push_back(id);}
+    }
+    void remove(int id) {
+        if (!--count[id]) {
+            int last=ids.back(); ids[position[id]]=last; position[last]=position[id]; ids.pop_back();
+        }
+    }
+    void clear() {for (auto id:ids) count[id]=0; ids.clear();}
+};
+
+void process(size_t bucket, std::vector<EventBlock>& events_by_id,
+             std::vector<Buckets<Click>>& clicks_by_file, const Dimensions& dim, const fs::path& output, const Keys& keys, CampaignTotals& campaigns) {
+    Index persons;
+    std::vector<Key> names;
+    std::vector<IndexedEvent> events;
+    size_t count=0;
+    for (auto& block:events_by_id) count+=block.events[bucket].size();
+    events.reserve(count);
+    for (auto& block:events_by_id) {
+        for (const auto& e:block.events[bucket]) if (e.sale.t!=invalid_time) {
+            unsigned person=persons.insert(e.person);
+            if (person==names.size()) names.push_back(e.person);
+            events.push_back({person,e.sale});
+        }
+        std::vector<Event>().swap(block.events[bucket]);
+    }
+    std::vector<std::array<char,9>> decoded(names.size());
     std::vector<IndexedClick> clicks;
-    for (auto& set : clicks_by_file) {
-        for (const auto& c : set[bucket]) {
-            auto it=persons.find(c.user);
-            if (it!=persons.end()) clicks.push_back({it->second,c.campaign,c.t,c.id});
+    for (auto& set:clicks_by_file) {
+        for (const auto& c:set[bucket]) {
+            unsigned person=persons.lookup(c.user);
+            if (person!=UINT32_MAX) clicks.push_back({person,c.campaign,c.t,c.id});
         }
         std::vector<Click>().swap(set[bucket]);
     }
-    std::sort(events.begin(),events.end(),[](const auto& a,const auto& b){
-        return std::tie(a.person,a.sale.t)<std::tie(b.person,b.sale.t);
-    });
-    std::sort(clicks.begin(),clicks.end(),[](const auto& a,const auto& b){
-        if (a.person!=b.person) return a.person<b.person;
+    order_by_person(events,names.size(),[](const auto& a,const auto& b){return a.sale.t<b.sale.t;});
+    order_by_person(clicks,names.size(),[](const auto& a,const auto& b){
         if (a.t!=b.t) return a.t<b.t;
-        return a.id>b.id; // The last eligible click wins the bytewise tie.
+        return a.id>b.id;
     });
 
-    Writer users(scratch/("user-"+std::to_string(bucket)+".csv"));
-    std::unordered_map<Millis,std::unordered_map<int,Credit>> campaigns;
+    daily_output::UserColumns users;
     std::unordered_map<int,int64_t> category_totals;
-    std::unordered_map<int,unsigned> active;
+    ActiveCampaigns active(dim.campaign_names.size());
+    // A bounded dense cache avoids millions of hash lookups for commonly
+    // encountered days. Sparse or exceptionally wide datasets use the map.
+    std::unordered_map<Millis,std::vector<Credit>> dense;
     size_t e=0, next=0;
     while (e<events.size()) {
         unsigned person=events[e].person;
@@ -146,25 +173,33 @@ void process(size_t bucket, std::vector<Buckets<Event>>& events_by_id,
                 Text name=dim.categories[cat];
                 if (amount>best || (amount==best && name<top)) {best=amount; top=name;}
             }
-            users.text(names[person]); users.comma(); users.number(current_day); users.comma();
-            users.number(daily.sessions); users.comma(); users.number(daily.events); users.comma();
-            users.number(daily.revenue); users.comma(); if (best) users.text(top);
-            users.line(); daily={}; category_totals.clear();
+            users.append(keys.decode(names[person],decoded[person]),current_day,daily.sessions,daily.events,daily.revenue,top);
+            daily={}; category_totals.clear();
         };
         while (e<events.size() && events[e].person==person) {
             Millis start=events[e].sale.t;
             Millis day=start/day_ms-(start%day_ms<0);
             if (day!=current_day) {finish_day(); current_day=day;}
             while (next<clicks.size() && clicks[next].person==person && clicks[next].t<=start) {
-                ++active[clicks[next].campaign]; ++next;
+                active.add(clicks[next].campaign); ++next;
             }
             while (oldest<next && clicks[oldest].t<start-week_ms) {
-                auto it=active.find(clicks[oldest++].campaign);
-                if (--it->second==0) active.erase(it);
+                active.remove(clicks[oldest++].campaign);
             }
             int winner=oldest==next ? 0 : clicks[next-1].campaign;
-            auto& day_campaigns=campaigns[day];
-            for (const auto& pair : active) ++day_campaigns[pair.first].assists;
+            Credit* credit;
+            auto day_it=dense.find(day);
+            if (day_it==dense.end() && (dense.size()+1)*dim.campaign_names.size()<=65536)
+                day_it=dense.try_emplace(day,dim.campaign_names.size()).first;
+            if (day_it!=dense.end()) {
+                auto& totals=day_it->second;
+                for (int id:active.ids) ++totals[id].assists;
+                credit=&totals[winner];
+            } else {
+                auto& totals=campaigns[day];
+                for (int id:active.ids) ++totals[id].assists;
+                credit=&totals[winner];
+            }
             Millis prev;
             int64_t revenue=0;
             ++daily.sessions;
@@ -175,19 +210,32 @@ void process(size_t bucket, std::vector<Buckets<Event>>& events_by_id,
                 prev=sale.t;
             } while (e<events.size() && events[e].person==person && events[e].sale.t-prev<=1800000);
             daily.revenue+=revenue;
-            auto& credit=day_campaigns[winner];
-            ++credit.sessions; credit.purchases+=revenue>0; credit.revenue+=revenue;
+            ++credit->sessions; credit->purchases+=revenue>0; credit->revenue+=revenue;
         }
         finish_day();
     }
-    users.close();
-    Writer ads(scratch/("campaign-"+std::to_string(bucket)+".csv"));
-    for (const auto& [day, totals] : campaigns) for (const auto& [index, counts] : totals) {
-        ads.text(dim.campaign_names[index]); ads.comma(); ads.text(dim.channels[index]); ads.comma();
-        ads.number(day); ads.comma(); ads.number(counts.sessions); ads.comma(); ads.number(counts.purchases);
-        ads.comma(); ads.number(counts.revenue); ads.comma(); ads.number(counts.assists); ads.line();
+    for (const auto& [day,totals]:dense) {
+        auto& dest=campaigns[day];
+        for (size_t id=0;id<totals.size();++id)
+            if (totals[id].sessions || totals[id].assists) dest.emplace(id,totals[id]);
     }
-    ads.close();
+    users.save(output/"user_daily"/("part-"+std::to_string(bucket)+".parquet"));
+}
+
+void save_campaigns(const std::vector<CampaignTotals>& partial, const Dimensions& dim, const fs::path& output) {
+    CampaignTotals total;
+    for (const auto& shard : partial) for (const auto& [day,campaigns] : shard) {
+        auto& dest=total[day];
+        for (const auto& [id,c] : campaigns) {
+            auto& row=dest[id];
+            row.sessions+=c.sessions; row.purchases+=c.purchases;
+            row.revenue+=c.revenue; row.assists+=c.assists;
+        }
+    }
+    daily_output::CampaignColumns ads;
+    for (const auto& [day,campaigns] : total) for (const auto& [id,c] : campaigns)
+        ads.append(dim.campaign_names[id],dim.channels[id],day,c.sessions,c.purchases,c.revenue,c.assists);
+    ads.save(output/"campaign_daily"/"part-0.parquet");
 }
 }
 
@@ -206,14 +254,14 @@ int main(int argc,char** argv) {
         };
         Inputs input;
         Dimensions dim(input,data);
-        Identities ids(input.chunks(data/"links"));
+        Keys users('u'), event_ids('e');
+        Identities ids(input.chunks(data/"links"),users);
         auto ev=input.chunks(data/"events"), cl=input.chunks(data/"clicks");
         log("load identities and map files");
-        std::vector<Buckets<Candidate>> raw(ev.size());
-        parallel(ev.size(),workers,[&](size_t i){read_events(ev[i],raw[i],dim,lo,hi);});
+        std::vector<EventBlock> raw(ev.size());
+        parallel(ev.size(),workers,[&](size_t i){read_events(ev[i],i,raw[i],dim,users,event_ids,ids,lo,hi);});
         log("parse events");
-        std::vector<Buckets<Event>> valid(shards);
-        parallel(shards,workers,[&](size_t i){dedup(i,raw,valid[i],ids);});
+        parallel(shards,workers,[&](size_t i){dedup(i,raw);});
         log("deduplicate and resolve people");
         std::vector<Buckets<Click>> clicks(cl.size());
         parallel(cl.size(),workers,[&](size_t i){
@@ -222,12 +270,14 @@ int main(int argc,char** argv) {
                 auto campaign=dim.campaigns.find(f[2]);
                 Millis t=timestamp(f[3]);
                 if (campaign==dim.campaigns.end() || t<lo-week_ms || t>=hi) return;
-                Text person=ids.person(f[1]);
+                Key person=ids.person(users.encode(f[1]));
                 clicks[i][shard(person)].push_back({person,f[0],t,campaign->second});
             });
         });
         log("parse clicks");
-        parallel(shards,workers,[&](size_t i){process(i,valid,clicks,dim,scratch);});
+        std::vector<CampaignTotals> partial(shards);
+        parallel(shards,workers,[&](size_t i){process(i,raw,clicks,dim,scratch,users,partial[i]);});
+        save_campaigns(partial,dim,scratch);
         log("session and attribution sweep");
     } catch (const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}
 }

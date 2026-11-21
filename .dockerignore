@@ -6,3 +6,5 @@
 !native_sweep.cpp
 !native_input.hpp
 !native_output.py
+!parquet_output.hpp
+!Makefile

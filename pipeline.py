@@ -7,7 +7,6 @@ from pathlib import Path
 import sys
 import subprocess
 import time
-import duckdb
 
 DAY = 86_400_000
 WEEK = 7 * DAY
@@ -99,6 +98,7 @@ def run(data, output, scratch):
         from native_output import run_native
         return run_native(executable, data, output, scratch)
     scratch.mkdir(parents=True, exist_ok=True)
+    import duckdb
     con = duckdb.connect(config={'threads':int(os.environ.get('NCPU','8')),
         'memory_limit':os.environ.get('MEMORY_LIMIT','16GB'),
         'temp_directory':str(scratch / 'duckdb_tmp'), 'preserve_insertion_order':False})
