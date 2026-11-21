@@ -94,6 +94,10 @@ def load_strict(con, data, name, columns, scratch):
 def run(data, output, scratch):
     started = time.perf_counter()
     data, output, scratch = map(Path, (data, output, scratch))
+    executable = Path(__file__).resolve().with_name("native_sweep")
+    if executable.is_file():
+        from native_output import run_native
+        return run_native(executable, data, output, scratch)
     scratch.mkdir(parents=True, exist_ok=True)
     con = duckdb.connect(config={'threads':int(os.environ.get('NCPU','8')),
         'memory_limit':os.environ.get('MEMORY_LIMIT','16GB'),

@@ -26,6 +26,20 @@ class BoundaryTests(unittest.TestCase):
         check(self.case('e,u\rx,2026-10-03T10:00:00Z,2026-10-03T10:00:00Z,view,p1,\n',links='a,u\rx\n'))
     def test_leading_zero_timestamp_and_price(self):
         check(self.case('e,u,0000000000000000000000000001791021600000,2026-10-03T10:00:00Z,purchase,p1,00000000000000000000000000000000010\n'))
+    def test_cross_file_winner_and_duplicate_click_expiry(self):
+        data = self.case(
+            'same,other,2026-10-08T10:00:00Z,2026-10-08T10:01:00Z,view,p1,\n'
+            'valid,one,2026-10-08T10:00:00Z,2026-10-08T10:00:00Z,purchase,p1,42\n'
+            'next,alias,2026-10-08T11:00:00Z,2026-10-08T11:00:00Z,view,p1,\n',
+            'a,one,c1,2026-10-01T10:00:00Z\nb,alias,c2,2026-10-01T10:00:00Z\n',
+            'alias,one\n')
+        (data / 'events' / 'another.csv').write_text(
+            'event_id,user_id,ts,ingest_ts,event_type,product_id,price_cents\n'
+            'same,one,bad,2026-10-08T10:00:00Z,view,p1,')
+        (data / 'clicks' / 'another.csv').write_text(
+            'click_id,user_id,campaign_id,ts\n"a",one,c1,2026-10-01T10:00:00Z')
+        check(data)
+
     def test_malformed_earliest_duplicate(self):
         check(self.case('e,u,bad,2026-10-03T10:00:00Z,view,p1,\ne,u,2026-10-03T10:00:00Z,2026-10-03T10:01:00Z,view,p1,\n'))
 

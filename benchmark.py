@@ -24,7 +24,7 @@ def main():
     p=argparse.ArgumentParser();p.add_argument('data');p.add_argument('output');p.add_argument('--scratch',default='scratch');p.add_argument('--runs',type=int,default=1);p.add_argument('--report',default='benchmark-result.json');a=p.parse_args()
     results=[]
     for number in range(1,a.runs+1):
-        code="import pipeline,resource,sys,json; pipeline.run(*sys.argv[1:]); r=resource.getrusage(resource.RUSAGE_SELF); print(json.dumps({'peak_rss_bytes':r.ru_maxrss*(1 if sys.platform=='darwin' else 1024)}))"
+        code="import pipeline,resource,sys,json; pipeline.run(*sys.argv[1:]); rss=max(resource.getrusage(who).ru_maxrss for who in (resource.RUSAGE_SELF, resource.RUSAGE_CHILDREN)); print(json.dumps({'max_single_process_rss_bytes':rss*(1 if sys.platform=='darwin' else 1024)}))"
         start=time.perf_counter();child=subprocess.run([sys.executable,'-c',code,a.data,a.output,a.scratch],capture_output=True,text=True)
         print(child.stderr,file=sys.stderr,end='')
         result={'run':number,'exit_code':child.returncode,'wall_seconds':round(time.perf_counter()-start,3),'memory_limit':os.environ.get('MEMORY_LIMIT','16GB'),'threads':int(os.environ.get('NCPU','8'))}

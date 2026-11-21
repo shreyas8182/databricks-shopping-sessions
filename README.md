@@ -1,8 +1,12 @@
 # Shopping Sessions
 
-Exact-rule DuckDB baseline for the Builders Buildathon shopping-sessions track.
+Compiled C++17 pipeline for the Builders Buildathon Shopping Sessions track. The native engine reads LF-delimited CSV, resolves identities, keeps the earliest event copy, and aggregates in shopper order. DuckDB writes the final Parquet files. Build with `make parser` or use the root Dockerfile. Without the compiled binary, the Python entry point uses the SQL implementation.
 
-## Status
+## Native checkpoint
+
+The scored SQL baseline at `2d0c3f8` earned **37.43 s** in hidden practice. On the local Apple machine, three runs of the compiled path took 3.069 / 2.906 / 2.922 s for 20M events (seed 42) and 12.328 / 8.667 / 8.630 s for 60M (seed 7). Both complete tables matched the baseline at each scale in duplicate-sensitive comparisons. Local timings include process startup and Parquet close. Page caches were not reset. This candidate has no official score.
+
+## SQL reference validation
 
 - Official rules downloaded and read November 21, 2026.
 - All 36 official correctness fixtures pass with DuckDB 1.4.2.
@@ -11,7 +15,7 @@ Exact-rule DuckDB baseline for the Builders Buildathon shopping-sessions track.
 - Independent Python oracle matches all fixtures and 10 generated seeds (10,000 events each), both original and reshuffled.
 - Seven additional regressions pass, including equal-time campaign assists, empty outputs, invalid clock values, embedded CR identities, and long leading zeros.
 - A generated 60M-event / 15M-click input completes locally with a 16GB engine limit; the repeatability report records the final timings. Linux amd64 container correctness checks pass in GitHub Actions.
-- No hidden practice score or full contest-resource container result has been verified.
+- The public practice receipt for the baseline is BB-9C4B911D.
 
 ## Run
 

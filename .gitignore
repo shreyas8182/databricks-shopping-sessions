@@ -8,3 +8,4 @@ scratch/
 *.parquet
 *.zip
 /parse_csv
+/native_sweep

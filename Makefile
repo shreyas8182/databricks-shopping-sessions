@@ -4,6 +4,7 @@ GENERATOR ?= vendor/generator/target/release/generate
 .PHONY: test fixtures differential dev check-dev parser
 
 parser:
+	$(CXX) -std=c++17 -O3 -pthread native_sweep.cpp -o native_sweep
 	$(CXX) -std=c++17 -O3 parse_csv.cpp -o parse_csv
 
 test: parser

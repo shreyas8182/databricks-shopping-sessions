@@ -3,3 +3,6 @@
 !requirements.txt
 !Dockerfile
 !parse_csv.cpp
+!native_sweep.cpp
+!native_input.hpp
+!native_output.py
