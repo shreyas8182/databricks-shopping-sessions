@@ -79,7 +79,7 @@ public:
 };
 
 template<size_t Width, class Visitor>
-void scan(Text bytes, Visitor visit) {
+void scan_scalar(Text bytes, Visitor visit) {
     std::array<Text, Width> fields;
     while (!bytes.empty()) {
         size_t newline = bytes.find('\n');
@@ -98,6 +98,110 @@ void scan(Text bytes, Visitor visit) {
             else row.remove_prefix(comma + 1);
         }
     }
+}
+
+// Produce one bit per byte for delimiters, LF and quotes. Each 16-byte
+// load stays within the mapped input. The scalar path handles the final row.
+#if defined(__x86_64__)
+#include <immintrin.h>
+#elif defined(__aarch64__)
+#include <arm_neon.h>
+#endif
+
+struct CsvMasks {unsigned delimiters, newlines, quotes;};
+#if defined(__aarch64__)
+inline unsigned byte_mask(uint8x16_t bits) {
+    const uint8x16_t weights={1,2,4,8,16,32,64,128,1,2,4,8,16,32,64,128};
+    auto weighted=vandq_u8(bits,weights);
+    return vaddv_u8(vget_low_u8(weighted)) | (unsigned(vaddv_u8(vget_high_u8(weighted)))<<8);
+}
+#endif
+#if defined(__x86_64__) || defined(__aarch64__)
+inline CsvMasks csv_masks(const char* p) {
+#if defined(__x86_64__)
+    auto v=_mm_loadu_si128(reinterpret_cast<const __m128i*>(p));
+    unsigned lf=_mm_movemask_epi8(_mm_cmpeq_epi8(v,_mm_set1_epi8(10)));
+    unsigned comma=_mm_movemask_epi8(_mm_cmpeq_epi8(v,_mm_set1_epi8(',')));
+    unsigned quotes=_mm_movemask_epi8(_mm_cmpeq_epi8(v,_mm_set1_epi8('"')));
+#else
+    auto v=vld1q_u8(reinterpret_cast<const uint8_t*>(p));
+    unsigned lf=byte_mask(vceqq_u8(v,vdupq_n_u8(10)));
+    unsigned comma=byte_mask(vceqq_u8(v,vdupq_n_u8(',')));
+    unsigned quotes=byte_mask(vceqq_u8(v,vdupq_n_u8('"')));
+#endif
+    return {lf|comma,lf,quotes};
+}
+#endif
+
+struct LineMasks {uint64_t separators=0,newlines=0,quotes=0;};
+#if defined(__x86_64__) || defined(__aarch64__)
+inline LineMasks line_masks(const char* p) {
+    LineMasks m;
+#if defined(__AVX2__)
+    for (unsigned i=0;i<64;i+=32) {
+        auto v=_mm256_loadu_si256(reinterpret_cast<const __m256i*>(p+i));
+        uint32_t lf=_mm256_movemask_epi8(_mm256_cmpeq_epi8(v,_mm256_set1_epi8(10)));
+        uint32_t comma=_mm256_movemask_epi8(_mm256_cmpeq_epi8(v,_mm256_set1_epi8(',')));
+        uint32_t quotes=_mm256_movemask_epi8(_mm256_cmpeq_epi8(v,_mm256_set1_epi8('"')));
+        m.separators |= uint64_t(lf|comma)<<i;
+        m.newlines |= uint64_t(lf)<<i;
+        m.quotes |= uint64_t(quotes)<<i;
+    }
+#else
+    for (unsigned i=0;i<64;i+=16) {
+        auto v=csv_masks(p+i);
+        m.separators |= uint64_t(v.delimiters)<<i;
+        m.newlines |= uint64_t(v.newlines)<<i;
+        m.quotes |= uint64_t(v.quotes)<<i;
+    }
+#endif
+    return m;
+}
+#endif
+template<size_t Width,class Visitor>
+void scan(Text bytes, Visitor visit) {
+#if defined(__x86_64__) || defined(__aarch64__)
+    std::array<Text,Width> fields;
+    while (bytes.size()>=128) {
+        const char* p=bytes.data();
+        auto low=line_masks(p);
+        LineMasks high;
+        size_t offset=0;
+        if (!low.newlines) {
+            high=line_masks(p+64); offset=64;
+            if (!high.newlines) {
+                size_t n=bytes.find('\n',128);
+                n=n==Text::npos ? bytes.size() : n+1;
+                scan_scalar<Width>(bytes.substr(0,n),visit); bytes.remove_prefix(n); continue;
+            }
+        }
+        auto& last=offset ? high : low;
+        uint64_t lf=last.newlines & -last.newlines;
+        last.quotes &= lf-1; last.separators &= lf|(lf-1);
+        size_t n=offset+__builtin_ctzll(lf);
+        bytes.remove_prefix(n+1);
+        if (__builtin_popcountll(low.separators)+__builtin_popcountll(high.separators)!=Width) continue;
+        // Every quote must be adjacent to a delimiter or the start of the row.
+        uint64_t allowed=(low.separators<<1)|(low.separators>>1)|1|(high.separators<<63);
+        if (low.quotes & ~allowed) continue;
+        allowed=(high.separators<<1)|(high.separators>>1)|(low.separators>>63);
+        if (high.quotes & ~allowed) continue;
+        size_t start=0;
+        bool valid=true;
+        for (size_t i=0;i<Width;++i) {
+            size_t end;
+            if (low.separators) {end=__builtin_ctzll(low.separators);low.separators&=low.separators-1;}
+            else {end=64+__builtin_ctzll(high.separators);high.separators&=high.separators-1;}
+            size_t length=end-start;
+            bool quoted=p[start]=='"';
+            if ((length && (p[end-1]=='"')!=quoted) || (quoted && length<2)) {valid=false;break;}
+            fields[i]=Text(p+start+quoted,length-2*quoted);
+            start=end+1;
+        }
+        if (valid) visit(fields);
+    }
+#endif
+    scan_scalar<Width>(bytes,visit);
 }
 
 template<class Task>
@@ -205,7 +309,7 @@ public:
 };
 
 class Index {
-    struct Slot {Key key=0; unsigned id=0;};
+    struct Slot {Key key=0; Key id=0;};
     std::vector<Slot> slots;
     unsigned count=0;
     size_t position(Key k) const {
@@ -231,7 +335,14 @@ public:
     }
     unsigned lookup(Key k) const {
         auto slot=slots[position(k)];
-        return slot.key ? slot.id : UINT32_MAX;
+        return slot.key ? unsigned(slot.id) : UINT32_MAX;
+    }
+    void replace_ids(const std::vector<Key>& values) {
+        for (auto& slot:slots) if (slot.key) slot.id=values[slot.id];
+    }
+    Key resolve(Key k) const {
+        auto slot=slots[position(k)];
+        return slot.key ? slot.id : k;
     }
 };
 
@@ -266,11 +377,11 @@ public:
             if (smallest[b]<smallest[a]) {smallest[a]=smallest[b]; canonical[a]=canonical[b];}
         });
         for (unsigned i=0;i<parent.size();++i) canonical[i]=canonical[root(i)];
+        index.replace_ids(canonical); std::vector<Key>().swap(canonical);
         std::vector<Text>().swap(smallest); std::vector<unsigned>().swap(weight);
         std::vector<unsigned>().swap(parent);
     }
     Key person(Key key) const {
-        unsigned id=index.lookup(key);
-        return id==UINT32_MAX ? key : canonical[id];
+        return index.resolve(key);
     }
 };

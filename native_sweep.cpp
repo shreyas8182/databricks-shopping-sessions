@@ -1,25 +1,52 @@
 #include "parquet_output.hpp"
-#include <map>
+#include <future>
 #include <tuple>
 
 namespace {
 constexpr size_t shards=64;
 size_t shard(Key key) { return key_hash(key) % shards; }
 
+// Numeric dimension labels can use direct addressing. Exact text lookup
+// covers sparse IDs, different prefixes and noncanonical decimal spellings.
+struct DimensionIndex {
+    std::unordered_map<Text,int> rows;
+    std::vector<int> dense;
+    Text prefix;
+    explicit DimensionIndex(Text prefix) : prefix(prefix) {}
+    int suffix(Text s) const {
+        if (s.size()<=prefix.size() || s.size()>prefix.size()+8 || s.substr(0,prefix.size())!=prefix) return -1;
+        s.remove_prefix(prefix.size());
+        if (s.size()>1 && s.front()=='0') return -1;
+        auto n=decimal(s);
+        return n==invalid_time ? -1 : int(n);
+    }
+    void finish() {
+        dense.resize(rows.size()*2+1,-1);
+        for (auto [s,id]:rows) {int n=suffix(s); if (unsigned(n)<dense.size()) dense[n]=id;}
+    }
+    int lookup(Text s) const {
+        int n=suffix(s);
+        if (unsigned(n)<dense.size()) return dense[n];
+        auto it=rows.find(s);
+        return it==rows.end() ? -1 : it->second;
+    }
+};
+
 struct Dimensions {
-    std::unordered_map<Text,int> products, campaigns;
+    DimensionIndex products{"p"}, campaigns{"c_"};
     std::vector<Text> categories{"unknown"}, campaign_names{"organic"}, channels{"organic"};
     Dimensions(Inputs& input, const fs::path& data) {
         std::unordered_map<Text,int> categories_by_name{{"unknown",0}};
         for (Text block : input.chunks(data/"products.csv")) scan<2>(block,[&](const auto& f){
             auto [it,fresh]=categories_by_name.emplace(f[1],categories.size());
             if (fresh) categories.push_back(f[1]);
-            products.emplace(f[0],it->second);
+            products.rows.emplace(f[0],it->second);
         });
         for (Text block : input.chunks(data/"campaigns.csv")) scan<2>(block,[&](const auto& f){
-            campaigns.emplace(f[0],campaign_names.size());
+            campaigns.rows.emplace(f[0],campaign_names.size());
             campaign_names.push_back(f[0]); channels.push_back(f[1]);
         });
+        products.finish(); campaigns.finish();
     }
 };
 
@@ -31,7 +58,12 @@ template<class Row> using Buckets=std::array<std::vector<Row>,shards>;
 struct EventBlock { Buckets<Event> events; Buckets<Ticket> tickets; };
 
 void read_events(Text input, uint32_t block, EventBlock& dst, const Dimensions& dim,
-                 Keys& users, Keys& ids, const Identities& links, Millis lo, Millis hi) {
+                 Keys& users, Keys& ids, Millis lo, Millis hi) {
+    size_t expected=input.size()/(82*shards)+16;
+    for (size_t i=0;i<shards;++i) {
+        dst.tickets[i].reserve(expected);
+        dst.events[i].reserve(expected);
+    }
     scan<7>(input,[&](const auto& f){
         if (f[0].empty()) return;
         Key id=ids.encode(f[0]);
@@ -42,12 +74,12 @@ void read_events(Text input, uint32_t block, EventBlock& dst, const Dimensions& 
             if (f[4]=="purchase") {
                 Millis price=decimal(f[6]);
                 if (price>=1 && price<=10000000) {
-                    auto it=dim.products.find(f[5]);
-                    sale.cents=int(price); sale.category=it==dim.products.end()?0:it->second;
+                    int category=dim.products.lookup(f[5]);
+                    sale.cents=int(price); sale.category=std::max(category,0);
                 } else sale.t=invalid_time;
             } else if (f[4]!="view" && f[4]!="cart") sale.t=invalid_time;
             if (sale.t!=invalid_time) {
-                Key person=links.person(users.encode(f[1]));
+                Key person=users.encode(f[1]);
                 size_t lane=shard(person);
                 auto& target=dst.events[lane];
                 row=uint32_t(target.size()*shards+lane);
@@ -77,6 +109,34 @@ void dedup(size_t lane, std::vector<EventBlock>& blocks) {
             blocks[loser->block].events[loser->row%shards][loser->row/shards].sale.t=invalid_time;
     }
     for (auto& block:blocks) std::vector<Ticket>().swap(block.tickets[lane]);
+}
+
+// Rows first arrive in raw-ID buckets so parsing can overlap link resolution.
+// Cache each distinct alias once per bucket, then send its rows to their
+// canonical shopper. Skewed shoppers still use the same session sweep.
+struct ResolvedBucket {Buckets<Event> events; Buckets<Click> clicks;};
+
+void resolve_bucket(size_t lane,std::vector<EventBlock>& raw,std::vector<Buckets<Click>>& clicks,
+                    const Identities& links,ResolvedBucket& out) {
+    Index aliases;
+    std::vector<Key> resolved;
+    auto name=[&](Key raw_id) {
+        unsigned i=aliases.insert(raw_id);
+        if (i==resolved.size()) resolved.push_back(links.person(raw_id));
+        return resolved[i];
+    };
+    for (auto& block:raw) {
+        for (auto& e:block.events[lane]) if (e.sale.t!=invalid_time) {
+            e.person=name(e.person); out.events[shard(e.person)].push_back(e);
+        }
+        std::vector<Event>().swap(block.events[lane]);
+    }
+    for (auto& block:clicks) {
+        for (auto& c:block[lane]) {
+            c.user=name(c.user); out.clicks[shard(c.user)].push_back(c);
+        }
+        std::vector<Click>().swap(block[lane]);
+    }
 }
 
 struct IndexedEvent { unsigned person; Sale sale; };
@@ -120,15 +180,14 @@ public:
     void clear() {for (auto id:ids) count[id]=0; ids.clear();}
 };
 
-void process(size_t bucket, std::vector<EventBlock>& events_by_id,
-             std::vector<Buckets<Click>>& clicks_by_file, const Dimensions& dim, const fs::path& output, const Keys& keys, CampaignTotals& campaigns) {
+void process(size_t bucket, std::vector<ResolvedBucket>& resolved, const Dimensions& dim, const fs::path& output, const Keys& keys, CampaignTotals& campaigns) {
     Index persons;
     std::vector<Key> names;
     std::vector<IndexedEvent> events;
     size_t count=0;
-    for (auto& block:events_by_id) count+=block.events[bucket].size();
+    for (auto& block:resolved) count+=block.events[bucket].size();
     events.reserve(count);
-    for (auto& block:events_by_id) {
+    for (auto& block:resolved) {
         for (const auto& e:block.events[bucket]) if (e.sale.t!=invalid_time) {
             unsigned person=persons.insert(e.person);
             if (person==names.size()) names.push_back(e.person);
@@ -138,12 +197,12 @@ void process(size_t bucket, std::vector<EventBlock>& events_by_id,
     }
     std::vector<std::array<char,9>> decoded(names.size());
     std::vector<IndexedClick> clicks;
-    for (auto& set:clicks_by_file) {
-        for (const auto& c:set[bucket]) {
+    for (auto& set:resolved) {
+        for (const auto& c:set.clicks[bucket]) {
             unsigned person=persons.lookup(c.user);
             if (person!=UINT32_MAX) clicks.push_back({person,c.campaign,c.t,c.id});
         }
-        std::vector<Click>().swap(set[bucket]);
+        std::vector<Click>().swap(set.clicks[bucket]);
     }
     order_by_person(events,names.size(),[](const auto& a,const auto& b){return a.sale.t<b.sale.t;});
     order_by_person(clicks,names.size(),[](const auto& a,const auto& b){
@@ -255,28 +314,34 @@ int main(int argc,char** argv) {
         Inputs input;
         Dimensions dim(input,data);
         Keys users('u'), event_ids('e');
-        Identities ids(input.chunks(data/"links"),users);
+        auto link_blocks=input.chunks(data/"links");
+        auto future_links=std::async(workers>1 ? std::launch::async : std::launch::deferred,
+            [&]{return Identities(link_blocks,users);});
         auto ev=input.chunks(data/"events"), cl=input.chunks(data/"clicks");
-        log("load identities and map files");
+        log("map inputs");
         std::vector<EventBlock> raw(ev.size());
-        parallel(ev.size(),workers,[&](size_t i){read_events(ev[i],i,raw[i],dim,users,event_ids,ids,lo,hi);});
-        log("parse events");
-        parallel(shards,workers,[&](size_t i){dedup(i,raw);});
-        log("deduplicate and resolve people");
         std::vector<Buckets<Click>> clicks(cl.size());
-        parallel(cl.size(),workers,[&](size_t i){
+        parallel(ev.size()+cl.size(),std::max(1U,workers-1),[&](size_t i){
+            if (i<ev.size()) {read_events(ev[i],i,raw[i],dim,users,event_ids,lo,hi);return;}
+            i-=ev.size();
             scan<4>(cl[i],[&](const auto& f){
                 if (f[0].empty() || f[1].empty()) return;
-                auto campaign=dim.campaigns.find(f[2]);
+                int campaign=dim.campaigns.lookup(f[2]);
                 Millis t=timestamp(f[3]);
-                if (campaign==dim.campaigns.end() || t<lo-week_ms || t>=hi) return;
-                Key person=ids.person(users.encode(f[1]));
-                clicks[i][shard(person)].push_back({person,f[0],t,campaign->second});
+                if (campaign<0 || t<lo-week_ms || t>=hi) return;
+                Key user=users.encode(f[1]);
+                clicks[i][shard(user)].push_back({user,f[0],t,campaign});
             });
         });
-        log("parse clicks");
+        auto links=future_links.get();
+        log("parse inputs and link identities");
+        parallel(shards,workers,[&](size_t i){dedup(i,raw);});
+        log("deduplicate");
+        std::vector<ResolvedBucket> resolved(shards);
+        parallel(shards,workers,[&](size_t i){resolve_bucket(i,raw,clicks,links,resolved[i]);});
+        log("resolve aliases");
         std::vector<CampaignTotals> partial(shards);
-        parallel(shards,workers,[&](size_t i){process(i,raw,clicks,dim,scratch,users,partial[i]);});
+        parallel(shards,workers,[&](size_t i){process(i,resolved,dim,scratch,users,partial[i]);});
         save_campaigns(partial,dim,scratch);
         log("session and attribution sweep");
     } catch (const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}

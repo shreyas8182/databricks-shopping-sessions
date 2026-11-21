@@ -6,8 +6,12 @@ GENERATOR ?= vendor/generator/target/release/generate
 ARROW_DIR = $(shell $(PYTHON) -c "from importlib.util import find_spec; from pathlib import Path; print(Path(find_spec('pyarrow').origin).parent)")
 ARROW_SUFFIX = $(if $(filter Darwin,$(shell uname)),.2200.dylib,.so.2200)
 
+NATIVE_FLAGS = -std=c++17 -O3 -pthread -I"$(ARROW_DIR)/include" native_sweep.cpp "$(ARROW_DIR)/libparquet$(ARROW_SUFFIX)" "$(ARROW_DIR)/libarrow$(ARROW_SUFFIX)" -Wl,-rpath,"$(ARROW_DIR)"
 parser:
-	$(CXX) -std=c++17 -O3 -pthread -I"$(ARROW_DIR)/include" native_sweep.cpp "$(ARROW_DIR)/libparquet$(ARROW_SUFFIX)" "$(ARROW_DIR)/libarrow$(ARROW_SUFFIX)" -Wl,-rpath,"$(ARROW_DIR)" -o native_sweep
+	$(CXX) $(NATIVE_FLAGS) -o native_sweep
+ifeq ($(shell uname -s)-$(shell uname -m),Linux-x86_64)
+	$(CXX) -mavx2 -mbmi -mbmi2 -mpopcnt $(NATIVE_FLAGS) -o native_sweep_avx2
+endif
 	$(CXX) -std=c++17 -O3 parse_csv.cpp -o parse_csv
 
 test: parser

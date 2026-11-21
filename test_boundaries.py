@@ -34,6 +34,17 @@ class BoundaryTests(unittest.TestCase):
         links = ''.join(f'{name},alias-{i}\n' for i, name in enumerate(ids))
         check(self.case(events, links=links))
 
+    def test_vector_boundaries_and_odd_identifiers(self):
+        # Vary record alignment across both 64-byte halves. Invalid interior
+        # quotes must be discarded before they can suppress a valid copy.
+        rows = []
+        for width in range(1, 132):
+            user = 'u' + 'a' * width
+            rows.append(f'e{width},{user},2026-10-03T10:00:00Z,2026-10-03T10:00:00Z,view,p1,')
+            rows.append(f'e{width},{user},2026-10-03T10:00:00Z,2026-10-03T09:00:00Z,view,p"1,')
+        rows.append('e-extra,"uλ",2026-10-03T11:00:00Z,2026-10-03T11:00:00Z,purchase,p1,30')
+        check(self.case('\n'.join(rows)))
+
     def test_cross_file_winner_and_duplicate_click_expiry(self):
         data = self.case(
             'same,other,2026-10-08T10:00:00Z,2026-10-08T10:01:00Z,view,p1,\n'
