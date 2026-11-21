@@ -7,7 +7,10 @@ Exact-rule DuckDB baseline for the Builders Buildathon shopping-sessions track.
 - Official rules downloaded and read November 21, 2026.
 - All 36 official correctness fixtures pass with DuckDB 1.4.2.
 - Credit and assists use separate click relations: equal-time campaigns are preserved for assists.
-- Development-answer, independent differential, full-scale, and constrained container checks are still pending.
+- Official 1M-event seed-1 development answers match exactly: 117,038 user rows and 27,400 campaign rows.
+- Independent Python oracle matches all fixtures and 10 generated seeds (10,000 events each), both original and reshuffled.
+- Six additional regressions pass, including equal-time campaign assists, empty outputs, invalid clock values, embedded CR identities, and long leading zeros.
+- Full-scale and constrained container checks are still pending.
 - No performance or submission-readiness claim is made yet.
 
 ## Run
@@ -59,3 +62,17 @@ Track: https://www.joinbuilders.org/buildathon/tracks/shopping-sessions
 ## Acknowledgments
 
 Challenge specification, fixture inputs, expected answers, and starter guidance: Builders Buildathon Shopping Sessions track. Implementation uses DuckDB (MIT); the official fixture checker uses Polars (MIT). Python standard library is used for orchestration and link handling. AI assistance was used to develop and review this implementation. Downloaded datasets, reference answers, generator binaries, and local environments are excluded from the repository.
+
+## Independent checks
+
+```sh
+python -m unittest -v test_boundaries
+python validate.py --fixtures /path/to/starter-duckdb/fixtures \
+  --generator /path/to/generate --seeds 10 --events 10000
+```
+
+`oracle.py` uses a separate byte-line parser, graph traversal, Python calendar validation, explicit session lists, and direct qualifying-click scans. DuckDB is used only to read the candidate Parquet in the comparison harness. The oracle is intended for small generated cases, not final-scale performance.
+
+## Development history
+
+The first fixture-passing commit exposed excessive memory use during the first 1M test. Replacing correlated line expansion with a projected expansion fixed it. A separate review also tightened clock validation so DuckDB cannot normalize hour 24 or second 60. The corrected 1M pipeline took about 2 seconds on the local Apple-silicon development machine; this is not a contest-hardware benchmark.

@@ -16,10 +16,10 @@ def quote(value):
 
 def strict_rows(path, width):
     # newline='' deliberately preserves CR; only LF separates records.
-    with open(path, encoding='utf-8', newline='') as stream:
+    with open(path, 'rb') as stream:
         next(stream, None)
         for line in stream:
-            line = line.removesuffix('\n')
+            line = line.removesuffix(b'\n').decode('utf-8')
             fields = line.split(',')
             if len(fields) != width:
                 continue
@@ -71,9 +71,10 @@ def load_strict(con, data, name, columns):
     # read_text avoids stock CSV readers repairing CRLF or stray quotes.
     con.execute(f'''CREATE TABLE {name} AS
       SELECT {fields} FROM (
-        SELECT string_split(line, ',') f FROM read_text({paths_sql}),
-        UNNEST(string_split(content, chr(10))) WITH ORDINALITY AS t(line, n)
-        WHERE n > 1 AND regexp_full_match(line, {quote(pattern)})
+        SELECT string_split(line, ',') f FROM (
+          SELECT unnest(string_split(content, chr(10))) line,
+            generate_subscripts(string_split(content, chr(10)), 1) n FROM read_text({paths_sql})
+        ) WHERE n > 1 AND regexp_full_match(line, {quote(pattern)})
       )''')
 
 def run(data, output, scratch):
@@ -89,7 +90,7 @@ def run(data, output, scratch):
     con.execute("SET TimeZone='UTC'")
     con.execute(r'''CREATE MACRO timestamp_ms(s) AS CASE
       WHEN regexp_full_match(s, '[0-9]+') THEN try_cast(s AS BIGINT)
-      WHEN regexp_full_match(s, '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(Z|[+-]([01][0-9]|2[0-3]):[0-5][0-9])')
+      WHEN regexp_full_match(s, '[0-9]{4}-[0-9]{2}-[0-9]{2}T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](Z|[+-]([01][0-9]|2[0-3]):[0-5][0-9])')
       THEN epoch_ms(try_cast(s AS TIMESTAMPTZ)) ELSE NULL END''')
     manifest = json.loads((data / 'manifest.json').read_text())
     lo, hi = con.execute('SELECT timestamp_ms(?), timestamp_ms(?)', [manifest['window_start'],manifest['window_end']]).fetchone()
