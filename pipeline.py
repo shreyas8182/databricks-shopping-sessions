@@ -101,6 +101,7 @@ def run(data, output, scratch):
     def stage(name, query):
         t = time.perf_counter(); con.execute(query)
         print(f'{name}: {time.perf_counter()-t:.3f}s', file=sys.stderr)
+    con.execute("SET enable_progress_bar=false")
     con.execute("SET TimeZone='UTC'")
     con.execute(r'''CREATE MACRO timestamp_ms(s) AS CASE
       WHEN regexp_full_match(s, '[0-9]+') THEN try_cast(s AS BIGINT)
@@ -132,7 +133,7 @@ def run(data, output, scratch):
     stage('sessions', '''CREATE TABLE session_events AS
       WITH gaps AS (SELECT *, t-lag(t) OVER (PARTITION BY person ORDER BY t) gap FROM valid)
       SELECT *,sum(CASE WHEN gap IS NULL OR gap>1800000 THEN 1 ELSE 0 END)
-        OVER (PARTITION BY person ORDER BY t ROWS UNBOUNDED PRECEDING) sid FROM gaps;
+        OVER (PARTITION BY person ORDER BY t RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) sid FROM gaps;
       CREATE TABLE sessions AS SELECT person,sid,min(t) start_ms,
         CAST(epoch_ms(min(t)) AS DATE) AS day,count(*)::BIGINT events,sum(cents)::BIGINT revenue_cents
         FROM session_events GROUP BY person,sid; DROP TABLE valid''')

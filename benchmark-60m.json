@@ -1,0 +1,60 @@
+{
+  "platform": "darwin",
+  "data": "data/scale60m",
+  "results": [
+    {
+      "run": 1,
+      "exit_code": 0,
+      "wall_seconds": 50.724,
+      "memory_limit": "16GB",
+      "threads": 8,
+      "peak_rss_bytes": 15777857536,
+      "sessions": 10052231,
+      "surviving_events": 58688623,
+      "revenue_cents": 20262829952,
+      "user_rows": 6645916,
+      "campaign_rows": 28014,
+      "assisted_sessions": 106596029,
+      "invariants": "PASS"
+    },
+    {
+      "run": 2,
+      "exit_code": 0,
+      "wall_seconds": 54.909,
+      "memory_limit": "16GB",
+      "threads": 8,
+      "peak_rss_bytes": 12523094016,
+      "sessions": 10052231,
+      "surviving_events": 58688623,
+      "revenue_cents": 20262829952,
+      "user_rows": 6645916,
+      "campaign_rows": 28014,
+      "assisted_sessions": 106596029,
+      "invariants": "PASS"
+    },
+    {
+      "run": 3,
+      "exit_code": 0,
+      "wall_seconds": 52.315,
+      "memory_limit": "16GB",
+      "threads": 8,
+      "peak_rss_bytes": 13710901248,
+      "sessions": 10052231,
+      "surviving_events": 58688623,
+      "revenue_cents": 20262829952,
+      "user_rows": 6645916,
+      "campaign_rows": 28014,
+      "assisted_sessions": 106596029,
+      "invariants": "PASS"
+    }
+  ],
+  "seed": 7,
+  "generated_events": 60000000,
+  "generated_clicks": 15000000,
+  "median_wall_seconds": 52.315,
+  "source_sha256": {
+    "pipeline.py": "eb5481a1a66f9190f3da67c31339ec292214f3096f148306406b39a30fd6cc83",
+    "parse_csv.cpp": "1547a39418fe3721ce3608717a4ccc79ac82d0ea57d8f41d8cdbcd56d040895d"
+  },
+  "limitations": "Native Apple-silicon development hardware; 8 configured threads, not pinned CPUs; caches not reset. Not a contest score."
+}

@@ -9,9 +9,9 @@ Exact-rule DuckDB baseline for the Builders Buildathon shopping-sessions track.
 - Credit and assists use separate click relations: equal-time campaigns are preserved for assists.
 - Official 1M-event seed-1 development answers match exactly: 117,038 user rows and 27,400 campaign rows.
 - Independent Python oracle matches all fixtures and 10 generated seeds (10,000 events each), both original and reshuffled.
-- Six additional regressions pass, including equal-time campaign assists, empty outputs, invalid clock values, embedded CR identities, and long leading zeros.
-- Full-scale and constrained container checks are still pending.
-- No performance or submission-readiness claim is made yet.
+- Seven additional regressions pass, including equal-time campaign assists, empty outputs, invalid clock values, embedded CR identities, and long leading zeros.
+- A generated 60M-event / 15M-click input completes locally with a 16GB engine limit; the repeatability report records the final timings. Linux amd64 container correctness checks pass in GitHub Actions.
+- No hidden practice score or full contest-resource container result has been verified.
 
 ## Run
 
@@ -22,7 +22,7 @@ make parser  # requires a C++17 compiler
 python pipeline.py /path/to/data /path/to/output --scratch /path/to/scratch
 ```
 
-Defaults: `/data`, `/output`, `/scratch`. Set `NCPU` (default 8) and `MEMORY_LIMIT` (default 16GB) as needed. The container uses 20GB, leaving headroom under the stated 24GB cap. Both output directories must be clean or contain only this program's `part-0.parquet`.
+Defaults: `/data`, `/output`, `/scratch`. Set `NCPU` (default 8) and `MEMORY_LIMIT` (default 16GB) as needed. The container also uses a 16GB engine limit, leaving headroom under the stated 24GB cap. Both output directories must be clean or contain only this program's `part-0.parquet`.
 
 ```sh
 docker build --platform linux/amd64 -t shopping-sessions .
@@ -34,7 +34,7 @@ docker run --rm --platform linux/amd64 --cpus=8 --memory=24g --memory-swap=24g \
   -v "$PWD/data:/data:ro" -v "$PWD/out:/output" -v "$PWD/scratch:/scratch" shopping-sessions
 ```
 
-This command is a rehearsal recipe, not evidence of a completed container test. Pin to eight available CPUs using `--cpuset-cpus` on the target Linux host. Docker is not installed in the current development environment.
+This command describes the full contest-resource rehearsal. GitHub Actions has passed a smaller 1M, 2-CPU, 5GB container test. Pin to eight available CPUs using `--cpuset-cpus` on the target Linux host. Docker is not installed in the current development environment.
 
 ## Design
 
@@ -86,5 +86,8 @@ Local Apple-silicon measurements; these are not contest-hardware scores.
 | --- | --- | --- | --- |
 | 20M events, 5M clicks, seed 42 | SQL text ingestion | 100.5 s | not recorded |
 | 20M events, 5M clicks, seed 42 | Streaming C++ CSV normalization | 15.1 s | 9.04 GB |
+| 60M events, 15M clicks, seed 7 | Final baseline; median of 3 local runs | 52.315 s | 15.78 GB maximum |
 
-The native parser reduced event ingestion from 85.6 s to 4.8 s. Both versions produced output; final-scale limits and hidden-data correctness require further checks. The 60M test is in progress. GitHub Actions runs official fixtures, differential cases, and the official 1M answer comparison inside a Linux amd64, read-only, network-isolated container. The CI runner uses 2 CPUs and a 5GB container cap, not the contest's full resources.
+The native parser reduced event ingestion from 85.6 s to 4.8 s. Both versions produced output; final-scale limits and hidden-data correctness require further checks. Three final 60M runs completed in 50.724, 54.909, and 52.315 seconds with a 16GB engine limit. All output invariants passed; see `benchmark-60m.json`. GitHub Actions runs official fixtures, differential cases, and the official 1M answer comparison inside a Linux amd64, read-only, network-isolated container. The CI runner uses 2 CPUs and a 5GB container cap, not the contest's full resources.
+
+See [VALIDATION.md](VALIDATION.md) for exact evidence, download checksums, reproduction commands, known stress-test failures, and remaining contest checks.

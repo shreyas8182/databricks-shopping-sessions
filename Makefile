@@ -12,8 +12,12 @@ fixtures: parser
 	SCRATCH_DIR=$(CURDIR)/scratch $(PYTHON) $(STARTER)/scripts/run_fixtures.py $(STARTER)/fixtures -- $(PYTHON) pipeline.py
 differential: parser
 	$(PYTHON) validate.py --fixtures $(STARTER)/fixtures --generator $(GENERATOR) --seeds 10 --events 10000
-dev:
+dev: parser
 	$(GENERATOR) --seed 1 --events 1000000 --clicks 250000 --output data/dev
 	$(PYTHON) pipeline.py data/dev out/dev --scratch scratch
 check-dev:
 	$(PYTHON) $(STARTER)/scripts/compare.py out/dev vendor/dev-answer
+
+.PHONY: benchmark
+benchmark: parser
+	$(PYTHON) benchmark.py data/scale60m out/scale60m --runs 3 --report benchmark-60m.json
