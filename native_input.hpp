@@ -376,12 +376,20 @@ public:
             parent[b]=a; weight[a]+=weight[b];
             if (smallest[b]<smallest[a]) {smallest[a]=smallest[b]; canonical[a]=canonical[b];}
         });
+        std::vector<Text> group_names;
+        for (unsigned i=0;i<parent.size();++i) if (parent[i]==i) {
+            canonical[i]=group_names.size();
+            group_names.push_back(smallest[i]);
+        }
         for (unsigned i=0;i<parent.size();++i) canonical[i]=canonical[root(i)];
-        index.replace_ids(canonical); std::vector<Key>().swap(canonical);
-        std::vector<Text>().swap(smallest); std::vector<unsigned>().swap(weight);
+        index.replace_ids(canonical);
+        smallest.swap(group_names);
+        std::vector<Key>().swap(canonical);
+        std::vector<unsigned>().swap(weight);
         std::vector<unsigned>().swap(parent);
     }
-    Key person(Key key) const {
-        return index.resolve(key);
-    }
+    unsigned lookup(Key key) const {return index.lookup(key);}
+    size_t size() const {return smallest.size();}
+    Text name(unsigned person) const {return smallest[person];}
+
 };

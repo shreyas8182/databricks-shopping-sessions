@@ -1,10 +1,16 @@
 # Shopping Sessions
 
-Compiled C++17 pipeline for the Builders Buildathon Shopping Sessions track. The native engine reads LF-delimited CSV, resolves identities, keeps the earliest event copy, and aggregates in shopper order. DuckDB writes the final Parquet files. Build with `make parser` or use the root Dockerfile. Without the compiled binary, the Python entry point uses the SQL implementation.
+Compiled C++17 pipeline for the Builders Buildathon Shopping Sessions track. The native engine reads LF-delimited CSV, resolves identities, keeps the earliest event copy, and aggregates in shopper order. Apache Parquet C++ writes each shopper shard directly. DuckDB is available for the SQL reference and output comparisons. Build with `make parser` or use the root Dockerfile. Without the compiled binary, the Python entry point uses the SQL implementation.
 
 ## Official practice result
 
-The [submitted compact-identity commit](https://github.com/shreyas8182/databricks-shopping-sessions/commit/8b340ce33e1fb9efb7ab91bf07f980244bf7a4e6) scored **6.83 s**, improving on the previous **37.43 s** by **5.48x**. On November 21 the practice board showed 235th of 258 teams when checked. The contest selected this entry for the final, which is scored separately on new input.
+The [parallel-links commit](https://github.com/shreyas8182/databricks-shopping-sessions/commit/811cd34df06eff5323839056f1a50afeb649dcec) scored **2.09 s** on hidden practice and was selected for the final when checked. The preceding public checkpoints scored 2.68 s, 6.83 s and 37.43 s.
+
+## Local 0.75-second target
+
+This branch assigns dense canonical shopper numbers before sorting events and clicks. On Apple silicon, eight threads processed each 20M-event / 5M-click dataset five times through the normal entry point in alternating seed order. Median elapsed time was **0.6501 s for seed 42** and **0.6402 s for seed 73**. All ten runs used new processes and empty output directories. The input files had been read earlier. In separate five-run sequences following a different dataset, the first measurements were 1.239 s and 1.231 s respectively. The OS page cache was uncontrolled.
+
+Both complete tables matched the scored SQL reference at both 20M seeds and at 60M events on seed 7. All 36 official fixtures, ten additional tests, the official 1M answers, and ten shuffled differential seeds passed. This dense-person revision has been tested locally and has no contest score. See [measurements and source hashes](benchmark-local-gate.json).
 
 ## Native checkpoint
 
@@ -39,7 +45,7 @@ make parser  # requires a C++17 compiler
 python pipeline.py /path/to/data /path/to/output --scratch /path/to/scratch
 ```
 
-Defaults: `/data`, `/output`, `/scratch`. Set `NCPU` (default 8) and `MEMORY_LIMIT` (default 16GB) as needed. The container also uses a 16GB engine limit, leaving headroom under the stated 24GB cap. Both output directories must be clean or contain only this program's `part-0.parquet`.
+Defaults: `/data`, `/output`, `/scratch`. Set `NCPU` (default 8) and `MEMORY_LIMIT` (default 16GB) as needed. The memory-limit setting applies to the SQL path. Use a clean output root for a new run. The native path writes 64 shopper shards and one campaign file.
 
 ```sh
 docker build --platform linux/amd64 -t shopping-sessions .
@@ -60,11 +66,11 @@ This command describes the full contest-resource rehearsal. GitHub Actions has p
 3. Event dedup keeps the complete earliest-ingest row before validation.
 4. Integer millisecond timestamps preserve all boundary conditions.
 5. Sessions span linked IDs and midnight, with gaps strictly greater than 30 minutes.
-6. ASOF credit picks the latest eligible click, with byte-order tie breaking.
-7. Assists use merged inclusive seven-day coverage intervals for every campaign.
+6. A time-ordered click cursor credits the latest eligible click, with byte-order tie breaking.
+7. A sliding seven-day window counts each active campaign once per session.
 8. Typed Parquet daily tables include assist-only campaign rows and null categories when appropriate.
 
-The C++17 helper strictly validates and normalizes CSV with bounded streaming memory. DuckDB reads the normalized scratch file, which is deleted after ingestion. Python link processing and window-sort event dedup remain optimization opportunities. Without the helper, a slower SQL ingestion fallback is available; build the helper for scale runs. The independent oracle does not reuse production parsing or SQL transformations.
+The native path scans read-only input mappings using SIMD delimiter masks, with a scalar path for long rows and short tails. It resolves identity links while workers parse events and clicks. Event-ID tickets suppress later copies, including when the earliest copy is invalid. Dense shopper ranges support per-person sorting, sessionization and attribution. The SQL path and the independent Python oracle remain available for comparison.
 
 ## Validation
 
