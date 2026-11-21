@@ -1,0 +1,9 @@
+.venv*/
+.toolchain/
+__pycache__/
+vendor/
+data/
+out/
+scratch/
+*.parquet
+*.zip
