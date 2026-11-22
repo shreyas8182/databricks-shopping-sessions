@@ -265,7 +265,17 @@ inline Millis timestamp(Text s) {
 }
 
 using Key = uint64_t;
+// Short inline IDs have their top bit clear. Interned IDs use tag 10.
+constexpr Key mapped_key = 3ULL << 62;
+inline Text mapped_value(Key key) {
+    return {reinterpret_cast<const char*>(key & ~mapped_key), 33};
+}
+inline bool equal_key(Key a, Key b) {
+    if (a == b) return true;
+    return (a & b & mapped_key) == mapped_key && mapped_value(a) == mapped_value(b);
+}
 inline uint64_t key_hash(Key key) {
+    if ((key & mapped_key) == mapped_key) return std::hash<Text>{}(mapped_value(key));
     key ^= key >> 31;
     key *= 0x9e3779b97f4a7c15ULL;
     return key ^ (key >> 33);
@@ -346,6 +356,12 @@ public:
             if (n<8) padded |= (~Key{0})<<(8*n);
             if (!(word&high) && !((padded-0x0101010101010101ULL)&~padded&high)) return word;
         }
+        // All CSV views remain backed by immutable mappings for this run.
+        if (prefix=='u' && s.size()==33) {
+            const auto address=reinterpret_cast<uintptr_t>(s.data());
+            if (address & mapped_key) throw std::runtime_error("unsupported mapping address");
+            return mapped_key | address;
+        }
         if (profile.count) (prefix=='e' ? profile.event : profile.user).fetch_add(1, std::memory_order_relaxed);
         size_t hash=std::hash<Text>{}(s);
         size_t lane=hash%extras.size();
@@ -355,6 +371,7 @@ public:
     }
     // Call after all encoders have joined. The caller owns short-key storage.
     Text decode(Key k, std::array<char,9>& buf) const {
+        if ((k & mapped_key) == mapped_key) return mapped_value(k);
         if (k&indirect) return extras[k&63].bytes[(k&~indirect)>>6];
         buf[0]=prefix;
         std::memcpy(buf.data()+1,&k,8);
@@ -368,7 +385,7 @@ class Index {
     unsigned count=0;
     size_t position(Key k) const {
         size_t i=key_hash(k)&(slots.size()-1);
-        while (slots[i].key && slots[i].key!=k) i=(i+1)&(slots.size()-1);
+        while (slots[i].key && !equal_key(slots[i].key,k)) i=(i+1)&(slots.size()-1);
         return i;
     }
     void resize(size_t n) {
