@@ -31,12 +31,11 @@ static std::string window_field(const std::string& manifest, const char* name) {
     throw std::runtime_error(std::string("missing manifest string: ") + name);
 }
 
-static void launch(std::vector<std::string> args, bool search_path = false) {
+static void launch(std::vector<std::string> args) {
     std::vector<char*> argv;
     for (auto& arg : args) argv.push_back(arg.data());
     argv.push_back(nullptr);
-    if (search_path) execvp(argv[0], argv.data());
-    else execv(argv[0], argv.data());
+    execv(argv[0], argv.data());
     throw std::runtime_error("could not launch " + args[0]);
 }
 
@@ -54,15 +53,23 @@ int main(int argc, char** argv) {
             __builtin_cpu_supports("bmi2") && __builtin_cpu_supports("popcnt") &&
             access(avx.c_str(), X_OK) == 0) executable = avx;
 #endif
-        if (access(executable.c_str(), X_OK) != 0 || argc > 3 ||
-            (argc > 1 && argv[1][0] == '-') || (argc > 2 && argv[2][0] == '-')) {
-            std::vector<std::string> args{"python", (bin / "pipeline.py").string()};
-            args.insert(args.end(), argv + 1, argv + argc);
-            launch(std::move(args), true);
+        std::vector<std::string> paths;
+        for (int i = 1; i < argc; ++i) {
+            std::string arg = argv[i];
+            // Accepted for callers of the earlier CLI. The C++ engine
+            // publishes temporary Parquet files in the output directory.
+            if (arg == "--scratch" && i + 1 < argc) { ++i; continue; }
+            if (arg.rfind("--scratch=", 0) == 0) continue;
+            if (arg == "--help" || arg == "-h") {
+                std::cout << "Usage: run [DATA_DIR [OUTPUT_DIR]] [--scratch DIR]\n";
+                return 0;
+            }
+            if (paths.size() == 2 || (!arg.empty() && arg.front() == '-'))
+                throw std::runtime_error("usage: run [DATA_DIR [OUTPUT_DIR]] [--scratch DIR]");
+            paths.push_back(arg);
         }
-
-        auto data = argc > 1 ? std::string(argv[1]) : env("DATA_DIR", "/data");
-        auto output = argc > 2 ? std::string(argv[2]) : env("OUTPUT_DIR", "/output");
+        auto data = paths.empty() ? env("DATA_DIR", "/data") : paths[0];
+        auto output = paths.size() < 2 ? env("OUTPUT_DIR", "/output") : paths[1];
         std::ifstream stream(fs::path(data) / "manifest.json");
         if (!stream) throw std::runtime_error("could not open manifest.json");
         std::string manifest((std::istreambuf_iterator<char>(stream)), {});
