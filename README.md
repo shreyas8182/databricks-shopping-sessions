@@ -1,10 +1,10 @@
 # Shopping Sessions
 
-The Shopping Sessions pipeline, launcher, benchmark runner, and validation driver are written in C++17. The contest container reads CSV and writes both daily Parquet tables using native binaries.
+The Shopping Sessions pipeline, launcher, benchmark runner, and validation driver are written in C++17. The contest container reads CSV and writes both daily Parquet tables using native binaries. Python is not part of the runtime image.
 
 ## Official practice result
 
-The [long-ID lookup commit](https://github.com/shreyas8182/databricks-shopping-sessions/commit/58126896922d20b0f0ece189c665296201ffa5dc) scored **1.9555 s** on hidden practice (receipt `BB-F23515D8`). The writer change has been validated separately. PyArrow read both complete dev tables, and the official comparator returned MATCH with 118,107 shopper rows and 27,449 campaign rows. All 36 official fixtures passed.
+The [long-ID lookup commit](https://github.com/shreyas8182/databricks-shopping-sessions/commit/58126896922d20b0f0ece189c665296201ffa5dc) scored **1.9555 s** on hidden practice (receipt `BB-F23515D8`). That is a historical contest receipt, not a score for this branch. The native validator returned MATCH with 118,107 shopper rows and 27,449 campaign rows. All 36 official fixtures passed.
 
 The earlier [parallel-links commit](https://github.com/shreyas8182/databricks-shopping-sessions/commit/811cd34df06eff5323839056f1a50afeb649dcec) scored **2.09 s** on hidden practice and was selected for the final when checked. The preceding public checkpoints scored 2.68 s, 6.83 s and 37.43 s.
 
@@ -60,7 +60,7 @@ make parser  # requires a C++17 compiler
 ./run /path/to/data /path/to/output
 ```
 
-Defaults: `/data`, `/output`, `/scratch`. Set `NCPU` (default 8) and `MEMORY_LIMIT` (default 16GB) as needed. The memory-limit setting applies to the SQL path. Use a clean output root for a new run. The native path writes 64 shopper shards and one campaign file.
+Defaults: `/data`, `/output`, and `/scratch`. Set `NCPU` (default 8) as needed. Use a clean output root for a new run. The native path writes 64 shopper shards and one campaign file.
 
 The native CSV scanner also accepts `SS_CHUNK_KB` (64–262144, default 2048) to vary mapped-input chunk sizes. On Linux, `SS_PREFAULT=0` disables advisory page prefaulting; prefaulting is enabled by default where supported. `SS_TIMING=1` reports the serial identity task duration alongside the normal stage timings. These controls are for local measurement and do not change the output schema.
 
@@ -93,7 +93,7 @@ The native path scans read-only input mappings using SIMD delimiter masks, with 
 
 Extract the official starter and expected development answers under `vendor/`. Run `make fixtures` for the official fixture suite and `make dev check-dev` to generate and compare the development dataset. The C++ validator uses the DuckDB CLI to check both tables against the organizer's CSV answers, including duplicate counts and daily keys.
 
-The contest organizer supplies the development data generator separately. Historic SQL and oracle checks are available from the earlier [scored source revision](https://github.com/shreyas8182/databricks-shopping-sessions/tree/a70d2ae60e7baf252a783ef250cce9bd41f3240a).
+The contest organizer supplies the development data generator separately. Earlier SQL and oracle implementations remain available in Git history.
 
 ## Development history
 
