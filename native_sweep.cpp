@@ -100,7 +100,7 @@ void dedup(size_t lane, std::vector<EventBlock>& blocks) {
     std::vector<Winner> winners(capacity);
     for (auto& block:blocks) for (const auto& ticket:block.tickets[lane]) {
         size_t slot=(key_hash(ticket.id)/shards)&(capacity-1);
-        while (winners[slot].key && winners[slot].key!=ticket.id) slot=(slot+1)&(capacity-1);
+        while (winners[slot].key && !equal_key(winners[slot].key,ticket.id)) slot=(slot+1)&(capacity-1);
         auto& winner=winners[slot];
         if (!winner.key) {winner={ticket.id,&ticket}; continue;}
         const Ticket* loser=&ticket;
