@@ -1,6 +1,6 @@
 # Shopping Sessions
 
-Compiled C++17 pipeline for the Builders Buildathon Shopping Sessions track. The native engine reads LF-delimited CSV, resolves identities, keeps the earliest event copy, and aggregates in shopper order. The team’s dependency-free C++17 writer in `parquet_min.hpp` writes uncompressed PLAIN Parquet into the output directories. The Docker entrypoint dispatches the native binaries directly and keeps Python available for the reference path. DuckDB is available for the SQL reference and output comparisons. Build with `make parser` or use the root Dockerfile. Without the compiled binary, the Python entry point uses the SQL implementation.
+The production pipeline is C++17. It reads CSV, resolves linked shopper IDs while parsing events and clicks, keeps the earliest copy of each event, and writes both daily tables with the native Parquet writer. The Docker image ships the C++ launcher and sweep binaries. On Linux x86-64 the launcher selects the AVX2 binary when the CPU supports its instructions. Python, DuckDB, and PyArrow are development tools for the reference implementation and correctness checks.
 
 ## Official practice result
 
@@ -53,11 +53,11 @@ The benchmark reports the largest individual process RSS across the parent and i
 
 ## Run
 
-Use Python 3.12 and a C++17 compiler for the native path. Install `requirements-test.txt` to run the comparison tools.
+Build and run with a C++17 compiler and make.
 
 ```sh
-make parser  # requires a C++17 compiler
-python pipeline.py /path/to/data /path/to/output --scratch /path/to/scratch
+make parser
+./run /path/to/data /path/to/output
 ```
 
 Defaults: `/data`, `/output`, `/scratch`. Set `NCPU` (default 8) and `MEMORY_LIMIT` (default 16GB) as needed. The memory-limit setting applies to the SQL path. Use a clean output root for a new run. The native path writes 64 shopper shards and one campaign file.
@@ -85,7 +85,7 @@ This command describes the full contest-resource rehearsal. GitHub Actions has p
 7. A sliding seven-day window counts each active campaign once per session.
 8. Typed Parquet daily tables include assist-only campaign rows and null categories when appropriate.
 
-The native path scans read-only input mappings using SIMD delimiter masks, with a scalar path for long rows and short tails. It resolves identity links while workers parse events and clicks. Event-ID tickets suppress later copies, including when the earliest copy is invalid. Dense shopper ranges support per-person sorting, sessionization and attribution. The SQL path and the independent Python oracle remain available for comparison.
+The native path scans read-only input mappings using SIMD delimiter masks, with a scalar path for long rows and short tails. It builds the identity index before workers parse events and clicks. Event-ID tickets suppress later copies, including when the earliest copy is invalid. Dense shopper ranges support per-person sorting, sessionization and attribution. The SQL path and the independent Python oracle remain available for comparison.
 
 ## Validation
 
