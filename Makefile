@@ -1,7 +1,6 @@
-PYTHON ?= python
 STARTER ?= vendor/starter-duckdb
 GENERATOR ?= vendor/generator/target/release/generate
-.PHONY: test fixtures differential dev check-dev parser
+.PHONY: test fixtures dev check-dev parser
 
 NATIVE_FLAGS = -std=c++17 -O3 -pthread native_sweep.cpp
 RUN_LINK_FLAGS = $(if $(filter Linux,$(shell uname -s)),-static-libstdc++ -static-libgcc)
@@ -13,17 +12,19 @@ ifeq ($(shell uname -s)-$(shell uname -m),Linux-x86_64)
 endif
 	$(CXX) -std=c++17 -O3 parse_csv.cpp -o parse_csv
 
-test: parser
-	$(PYTHON) -m unittest -v test_boundaries
-fixtures: parser
-	SCRATCH_DIR=$(CURDIR)/scratch $(PYTHON) $(STARTER)/scripts/run_fixtures.py $(STARTER)/fixtures -- $(PYTHON) pipeline.py
-differential: parser
-	$(PYTHON) validate.py --fixtures $(STARTER)/fixtures --generator $(GENERATOR) --seeds 10 --events 10000
+test: fixtures
+
+fixtures: parser check_native
+	./check_native fixtures "$(STARTER)/fixtures" ./run
+
+check_native: check_native.cpp
+	$(CXX) -std=c++17 -O2 $< -o $@
+
 dev: parser
 	$(GENERATOR) --seed 1 --events 1000000 --clicks 250000 --output data/dev
 	./run data/dev out/dev
-check-dev:
-	$(PYTHON) $(STARTER)/scripts/compare.py out/dev vendor/dev-answer
+check-dev: check_native
+	./check_native compare out/dev vendor/dev-answer
 
 .PHONY: benchmark
 DATA ?= data/scale60m

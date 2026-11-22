@@ -61,6 +61,7 @@ struct EventBlock { Buckets<Event> events; Buckets<Ticket> tickets; };
 
 void read_events(Text input, EventBlock& dst, const Dimensions& dim,
                  Keys& users, Keys& ids, Millis lo, Millis hi) {
+    prefault(input);
     size_t expected=input.size()/(82*shards)+16;
     for (size_t i=0;i<shards;++i) {
         dst.tickets[i].reserve(expected);
@@ -264,11 +265,15 @@ void process(size_t bucket, std::vector<ResolvedBucket>& resolved, const Dimensi
         [](const auto& a,const auto& b){return a.t!=b.t ? a.t<b.t : a.id>b.id;});
 
     daily_output::UserColumns users;
-    std::unordered_map<int,int64_t> category_totals;
+    std::vector<int64_t> category_totals(dim.categories.size(), 0);
+    std::vector<int> touched_categories;
     ActiveCampaigns active(dim.campaign_names.size());
     // A bounded dense cache avoids millions of hash lookups for commonly
     // encountered days. Sparse or exceptionally wide datasets use the map.
     std::unordered_map<Millis,std::vector<Credit>> dense;
+    Millis cache_day=invalid_time;
+    std::vector<Credit>* cache_dense=nullptr;
+    std::unordered_map<int,Credit>* cache_map=nullptr;
     size_t e=0, next=0;
     while (e<events.size()) {
         unsigned person=events[e].person;
@@ -283,12 +288,15 @@ void process(size_t bucket, std::vector<ResolvedBucket>& resolved, const Dimensi
             if (current_day==invalid_time) return;
             Text top;
             int64_t best=0;
-            for (auto [cat,amount] : category_totals) {
+            for (int cat : touched_categories) {
+                int64_t amount=category_totals[cat];
                 Text name=dim.categories[cat];
                 if (amount>best || (amount==best && name<top)) {best=amount; top=name;}
+                category_totals[cat]=0;
             }
+            touched_categories.clear();
             users.append(person_name,current_day,daily.sessions,daily.events,daily.revenue,top);
-            daily={}; category_totals.clear();
+            daily={};
         };
         while (e<events.size() && events[e].person==person) {
             Millis start=events[e].sale.t;
@@ -301,18 +309,21 @@ void process(size_t bucket, std::vector<ResolvedBucket>& resolved, const Dimensi
                 active.remove(clicks[oldest++].campaign);
             }
             int winner=oldest==next ? 0 : clicks[next-1].campaign;
+            if (day!=cache_day) {
+                cache_day=day;
+                auto day_it=dense.find(day);
+                if (day_it==dense.end() && (dense.size()+1)*dim.campaign_names.size()<=65536)
+                    day_it=dense.try_emplace(day,dim.campaign_names.size()).first;
+                if (day_it!=dense.end()) {cache_dense=&day_it->second; cache_map=nullptr;}
+                else {cache_dense=nullptr; cache_map=&campaigns[day];}
+            }
             Credit* credit;
-            auto day_it=dense.find(day);
-            if (day_it==dense.end() && (dense.size()+1)*dim.campaign_names.size()<=65536)
-                day_it=dense.try_emplace(day,dim.campaign_names.size()).first;
-            if (day_it!=dense.end()) {
-                auto& totals=day_it->second;
-                for (int id:active.ids) ++totals[id].assists;
-                credit=&totals[winner];
+            if (cache_dense) {
+                for (int id:active.ids) ++(*cache_dense)[id].assists;
+                credit=&(*cache_dense)[winner];
             } else {
-                auto& totals=campaigns[day];
-                for (int id:active.ids) ++totals[id].assists;
-                credit=&totals[winner];
+                for (int id:active.ids) ++(*cache_map)[id].assists;
+                credit=&(*cache_map)[winner];
             }
             Millis prev;
             int64_t revenue=0;
@@ -320,7 +331,10 @@ void process(size_t bucket, std::vector<ResolvedBucket>& resolved, const Dimensi
             do {
                 const Sale& sale=events[e++].sale;
                 ++daily.events; revenue+=sale.cents;
-                if (sale.cents) category_totals[sale.category]+=sale.cents;
+                if (sale.cents) {
+                    if (!category_totals[sale.category]) touched_categories.push_back(sale.category);
+                    category_totals[sale.category]+=sale.cents;
+                }
                 prev=sale.t;
             } while (e<events.size() && events[e].person==person && events[e].sale.t-prev<=1800000);
             daily.revenue+=revenue;
@@ -377,10 +391,17 @@ int main(int argc,char** argv) {
         std::vector<EventBlock> raw(ev.size());
         std::vector<Buckets<Click>> clicks(cl.size());
         parallel(1+ev.size()+cl.size(),workers,[&](size_t task){
-            if (task==0) {identities.emplace(link_blocks,users); return;}
+            if (task==0) {
+                auto begin=Clock::now();
+                for (Text block:link_blocks) prefault(block);
+                identities.emplace(link_blocks,users);
+                if (profile.timing) std::cerr<<"identity task "<<std::chrono::duration<double>(Clock::now()-begin).count()<<"s\n";
+                return;
+            }
             size_t i=task-1;
             if (i<ev.size()) {read_events(ev[i],raw[i],dim,users,event_ids,lo,hi);return;}
             i-=ev.size();
+            prefault(cl[i]);
             scan<4>(cl[i],[&](const auto& f){
                 if (f[0].empty() || f[1].empty()) return;
                 int campaign=dim.campaigns.lookup(f[2]);

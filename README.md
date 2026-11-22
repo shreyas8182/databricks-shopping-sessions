@@ -1,6 +1,6 @@
 # Shopping Sessions
 
-Compiled C++17 pipeline for the Builders Buildathon Shopping Sessions track. The contest image runs the native executable directly and contains no Python runtime. Python remains a local validation and reference path. The native engine reads LF-delimited CSV, resolves identities, keeps the earliest event copy, and aggregates in shopper order. The team’s dependency-free C++17 writer in `parquet_min.hpp` writes uncompressed PLAIN Parquet into the output directories. The Docker image contains only the native launcher and pipeline binaries. Python, DuckDB and the oracle remain local validation tools. DuckDB is available for the SQL reference and output comparisons. Build with `make parser` or use the root Dockerfile. Without the compiled binary, the Python entry point uses the SQL implementation.
+The Shopping Sessions pipeline, launcher, benchmark runner, and validation driver are written in C++17. The contest container reads CSV and writes both daily Parquet tables using native binaries.
 
 ## Official practice result
 
@@ -53,7 +53,7 @@ The benchmark reports the largest individual process RSS across the parent and i
 
 ## Run
 
-Use Python 3.12 and a C++17 compiler for the native path. Install `requirements-test.txt` to run the comparison tools.
+All checked-in executable implementation and validation tooling is C++17. For validation, install the DuckDB 1.4.2 CLI and put it on PATH or set DUCKDB to its executable path. The official input generator is supplied by the contest as a separate Rust binary; it is not part of the submitted runtime.
 
 ```sh
 make parser  # requires a C++17 compiler
@@ -61,6 +61,8 @@ make parser  # requires a C++17 compiler
 ```
 
 Defaults: `/data`, `/output`, `/scratch`. Set `NCPU` (default 8) and `MEMORY_LIMIT` (default 16GB) as needed. The memory-limit setting applies to the SQL path. Use a clean output root for a new run. The native path writes 64 shopper shards and one campaign file.
+
+The native CSV scanner also accepts `SS_CHUNK_KB` (64–262144, default 2048) to vary mapped-input chunk sizes. On Linux, `SS_PREFAULT=0` disables advisory page prefaulting; prefaulting is enabled by default where supported. `SS_TIMING=1` reports the serial identity task duration alongside the normal stage timings. These controls are for local measurement and do not change the output schema.
 
 ```sh
 docker build --platform linux/amd64 -t shopping-sessions .
@@ -85,32 +87,13 @@ This command describes the full contest-resource rehearsal. GitHub Actions has p
 7. A sliding seven-day window counts each active campaign once per session.
 8. Typed Parquet daily tables include assist-only campaign rows and null categories when appropriate.
 
-The native path scans read-only input mappings using SIMD delimiter masks, with a scalar path for long rows and short tails. It resolves identity links while workers parse events and clicks. Event-ID tickets suppress later copies, including when the earliest copy is invalid. Dense shopper ranges support per-person sorting, sessionization and attribution. The SQL path and the independent Python oracle remain available for comparison.
+The native path scans read-only input mappings using SIMD delimiter masks, with a scalar path for long rows and short tails. It resolves identity links while workers parse events and clicks. Event-ID tickets suppress later copies, including when the earliest copy is invalid. Dense shopper ranges support per-person sorting, sessionization and attribution.
 
 ## Validation
 
-Download and extract the official DuckDB starter outside the tracked source tree. Its `scripts/run_fixtures.py` requires Polars (tested with 1.35.2):
+Extract the official starter and expected development answers under `vendor/`. Run `make fixtures` for the official fixture suite and `make dev check-dev` to generate and compare the development dataset. The C++ validator uses the DuckDB CLI to check both tables against the organizer's CSV answers, including duplicate counts and daily keys.
 
-```sh
-SCRATCH_DIR="$PWD/scratch" python /path/to/starter-duckdb/scripts/run_fixtures.py \
-  /path/to/starter-duckdb/fixtures -- python pipeline.py
-```
-
-Track: https://www.joinbuilders.org/buildathon/tracks/shopping-sessions
-
-## Acknowledgments
-
-Challenge specification, fixture inputs, expected answers, and starter guidance: Builders Buildathon Shopping Sessions track. Implementation uses DuckDB (MIT); the official fixture checker uses Polars (MIT). Python standard library is used for orchestration and link handling. AI assistance was used to develop and review this implementation. Downloaded datasets, reference answers, generator binaries, and local environments are excluded from the repository.
-
-## Independent checks
-
-```sh
-python -m unittest -v test_boundaries
-python validate.py --fixtures /path/to/starter-duckdb/fixtures \
-  --generator /path/to/generate --seeds 10 --events 10000
-```
-
-`oracle.py` uses a separate byte-line parser, graph traversal, Python calendar validation, explicit session lists, and direct qualifying-click scans. DuckDB is used only to read the candidate Parquet in the comparison harness. The oracle is intended for small generated cases, not final-scale performance.
+The contest organizer supplies the development data generator separately. Historic SQL and oracle checks are available from the earlier [scored source revision](https://github.com/shreyas8182/databricks-shopping-sessions/tree/a70d2ae60e7baf252a783ef250cce9bd41f3240a).
 
 ## Development history
 
@@ -126,8 +109,8 @@ Local Apple-silicon measurements; these are not contest-hardware scores.
 | 20M events, 5M clicks, seed 42 | Streaming C++ CSV normalization | 15.1 s | 9.04 GB |
 | 60M events, 15M clicks, seed 7 | Final baseline; median of 3 local runs | 52.315 s | 15.78 GB maximum |
 
-The native parser reduced event ingestion from 85.6 s to 4.8 s. Both versions produced output; final-scale limits and hidden-data correctness require further checks. Three final 60M runs completed in 50.724, 54.909, and 52.315 seconds with a 16GB engine limit. All output invariants passed; see `benchmark-60m.json`. GitHub Actions runs official fixtures, differential cases, and the official 1M answer comparison inside a Linux amd64, read-only, network-isolated container. The CI runner uses 2 CPUs and a 5GB container cap, not the contest's full resources.
+The native parser reduced event ingestion from 85.6 s to 4.8 s. Both versions produced output; final-scale limits and hidden-data correctness require further checks. Three final 60M runs completed in 50.724, 54.909, and 52.315 seconds with a 16GB engine limit. All output invariants passed; see `benchmark-60m.json`. GitHub Actions runs official fixtures and the official 1M answer comparison inside a Linux amd64, read-only, network-isolated container. The CI runner uses 2 CPUs and a 5GB container cap, not the contest's full resources.
 
 See [VALIDATION.md](VALIDATION.md) for exact evidence, download checksums, reproduction commands, known stress-test failures, and remaining contest checks.
 
-For native elapsed-time measurements, run `make benchmark DATA=/path/to/data OUTPUT=/path/to/new-output RUNS=3`. Each trial starts a new C++ process and preserves its Parquet files in a separate output directory. The Python reference and invariant checker remain available for independent comparisons.
+For native elapsed-time measurements, run `make benchmark DATA=/path/to/data OUTPUT=/path/to/new-output RUNS=3`. Each trial starts a new C++ process and preserves its Parquet files in a separate output directory.

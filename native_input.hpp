@@ -69,7 +69,11 @@ public:
             size_t header = bytes.find('\n');
             if (header == Text::npos) continue;
             bytes.remove_prefix(header + 1);
-            constexpr size_t target = 2 * 1024 * 1024;
+            static const size_t target = [] {
+                const char* value = std::getenv("SS_CHUNK_KB");
+                long kb = value ? std::atol(value) : 2048;
+                return size_t(kb >= 64 && kb <= 262144 ? kb : 2048) * 1024;
+            }();
             while (!bytes.empty()) {
                 size_t end = bytes.find('\n', std::min(target, bytes.size()));
                 size_t length = end == Text::npos ? bytes.size() : end + 1;
@@ -80,6 +84,27 @@ public:
         return result;
     }
 };
+
+// Batch-fault a worker's own mapped input chunk where the Linux kernel
+// supports it. This is advisory and intentionally ignores unsupported cases.
+inline void prefault(Text bytes) {
+#if defined(__linux__)
+#ifndef MADV_POPULATE_READ
+#define MADV_POPULATE_READ 22
+#endif
+    static const bool enabled = [] {
+        const char* value = std::getenv("SS_PREFAULT");
+        return !(value && value[0] == '0');
+    }();
+    if (!enabled || bytes.empty()) return;
+    const uintptr_t page = static_cast<uintptr_t>(sysconf(_SC_PAGESIZE));
+    const uintptr_t begin = reinterpret_cast<uintptr_t>(bytes.data()) & ~(page - 1);
+    const uintptr_t end = (reinterpret_cast<uintptr_t>(bytes.data()) + bytes.size() + page - 1) & ~(page - 1);
+    (void)madvise(reinterpret_cast<void*>(begin), end - begin, MADV_POPULATE_READ);
+#else
+    (void)bytes;
+#endif
+}
 
 template<size_t Width, class Visitor>
 void scan_scalar(Text bytes, Visitor visit) {
