@@ -357,7 +357,7 @@ public:
             if (!(word&high) && !((padded-0x0101010101010101ULL)&~padded&high)) return word;
         }
         // All CSV views remain backed by immutable mappings for this run.
-        if (prefix=='u' && s.size()==33) {
+        if (s.size()==33) {
             const auto address=reinterpret_cast<uintptr_t>(s.data());
             if (address & mapped_key) throw std::runtime_error("unsupported mapping address");
             return mapped_key | address;
