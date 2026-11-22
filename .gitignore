@@ -11,3 +11,5 @@ scratch/
 /native_sweep
 /native_sweep_avx2
 /run
+
+/benchmark_native

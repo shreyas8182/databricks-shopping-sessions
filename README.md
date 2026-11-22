@@ -57,7 +57,7 @@ Use Python 3.12 and a C++17 compiler for the native path. Install `requirements-
 
 ```sh
 make parser  # requires a C++17 compiler
-python pipeline.py /path/to/data /path/to/output --scratch /path/to/scratch
+./run /path/to/data /path/to/output
 ```
 
 Defaults: `/data`, `/output`, `/scratch`. Set `NCPU` (default 8) and `MEMORY_LIMIT` (default 16GB) as needed. The memory-limit setting applies to the SQL path. Use a clean output root for a new run. The native path writes 64 shopper shards and one campaign file.
@@ -129,3 +129,5 @@ Local Apple-silicon measurements; these are not contest-hardware scores.
 The native parser reduced event ingestion from 85.6 s to 4.8 s. Both versions produced output; final-scale limits and hidden-data correctness require further checks. Three final 60M runs completed in 50.724, 54.909, and 52.315 seconds with a 16GB engine limit. All output invariants passed; see `benchmark-60m.json`. GitHub Actions runs official fixtures, differential cases, and the official 1M answer comparison inside a Linux amd64, read-only, network-isolated container. The CI runner uses 2 CPUs and a 5GB container cap, not the contest's full resources.
 
 See [VALIDATION.md](VALIDATION.md) for exact evidence, download checksums, reproduction commands, known stress-test failures, and remaining contest checks.
+
+For native elapsed-time measurements, run `make benchmark DATA=/path/to/data OUTPUT=/path/to/new-output RUNS=3`. Each trial starts a new C++ process and preserves its Parquet files in a separate output directory. The Python reference and invariant checker remain available for independent comparisons.

@@ -21,10 +21,16 @@ differential: parser
 	$(PYTHON) validate.py --fixtures $(STARTER)/fixtures --generator $(GENERATOR) --seeds 10 --events 10000
 dev: parser
 	$(GENERATOR) --seed 1 --events 1000000 --clicks 250000 --output data/dev
-	$(PYTHON) pipeline.py data/dev out/dev --scratch scratch
+	./run data/dev out/dev
 check-dev:
 	$(PYTHON) $(STARTER)/scripts/compare.py out/dev vendor/dev-answer
 
 .PHONY: benchmark
-benchmark: parser
-	$(PYTHON) benchmark.py data/scale60m out/scale60m --runs 3 --report benchmark-60m.json
+DATA ?= data/scale60m
+OUTPUT ?= out/native-benchmark
+RUNS ?= 3
+benchmark: parser benchmark_native
+	./benchmark_native ./run "$(DATA)" "$(OUTPUT)" "$(RUNS)"
+
+benchmark_native: benchmark_native.cpp
+	$(CXX) -std=c++17 -O2 $< -o $@
