@@ -10,3 +10,4 @@ scratch/
 /parse_csv
 /native_sweep
 /native_sweep_avx2
+/run

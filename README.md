@@ -1,6 +1,6 @@
 # Shopping Sessions
 
-Compiled C++17 pipeline for the Builders Buildathon Shopping Sessions track. The native engine reads LF-delimited CSV, resolves identities, keeps the earliest event copy, and aggregates in shopper order. The team’s dependency-free C++17 writer in `parquet_min.hpp` writes uncompressed PLAIN Parquet into the output directories. Python still dispatches the native binaries. DuckDB is available for the SQL reference and output comparisons. Build with `make parser` or use the root Dockerfile. Without the compiled binary, the Python entry point uses the SQL implementation.
+Compiled C++17 pipeline for the Builders Buildathon Shopping Sessions track. The native engine reads LF-delimited CSV, resolves identities, keeps the earliest event copy, and aggregates in shopper order. The team’s dependency-free C++17 writer in `parquet_min.hpp` writes uncompressed PLAIN Parquet into the output directories. The Docker entrypoint dispatches the native binaries directly and keeps Python available for the reference path. DuckDB is available for the SQL reference and output comparisons. Build with `make parser` or use the root Dockerfile. Without the compiled binary, the Python entry point uses the SQL implementation.
 
 ## Official practice result
 

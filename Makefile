@@ -4,7 +4,9 @@ GENERATOR ?= vendor/generator/target/release/generate
 .PHONY: test fixtures differential dev check-dev parser
 
 NATIVE_FLAGS = -std=c++17 -O3 -pthread native_sweep.cpp
+RUN_LINK_FLAGS = $(if $(filter Linux,$(shell uname -s)),-static-libstdc++ -static-libgcc)
 parser:
+	$(CXX) -std=c++17 -O2 $(RUN_LINK_FLAGS) run.cpp -o run
 	$(CXX) $(NATIVE_FLAGS) -o native_sweep
 ifeq ($(shell uname -s)-$(shell uname -m),Linux-x86_64)
 	$(CXX) -mavx2 -mbmi -mbmi2 -mpopcnt $(NATIVE_FLAGS) -o native_sweep_avx2

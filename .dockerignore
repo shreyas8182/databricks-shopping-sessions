@@ -9,3 +9,4 @@
 !parquet_output.hpp
 !Makefile
 !parquet_min.hpp
+!run.cpp
