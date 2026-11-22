@@ -54,12 +54,11 @@ int main(int argc, char** argv) {
             __builtin_cpu_supports("bmi2") && __builtin_cpu_supports("popcnt") &&
             access(avx.c_str(), X_OK) == 0) executable = avx;
 #endif
-        if (access(executable.c_str(), X_OK) != 0 || argc > 3 ||
-            (argc > 1 && argv[1][0] == '-') || (argc > 2 && argv[2][0] == '-')) {
-            std::vector<std::string> args{"python", (bin / "pipeline.py").string()};
-            args.insert(args.end(), argv + 1, argv + argc);
-            launch(std::move(args), true);
-        }
+        if (access(executable.c_str(), X_OK) != 0)
+            throw std::runtime_error("native pipeline executable is missing");
+        if (argc > 3 || (argc > 1 && argv[1][0] == '-') ||
+            (argc > 2 && argv[2][0] == '-'))
+            throw std::runtime_error("expected optional data and output paths");
 
         auto data = argc > 1 ? std::string(argv[1]) : env("DATA_DIR", "/data");
         auto output = argc > 2 ? std::string(argv[2]) : env("OUTPUT_DIR", "/output");
