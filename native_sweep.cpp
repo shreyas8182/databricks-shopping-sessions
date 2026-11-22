@@ -1,6 +1,8 @@
 #include "parquet_output.hpp"
 #include <future>
 #include <tuple>
+#include <sys/file.h>
+#include <unordered_set>
 
 namespace {
 constexpr size_t shards=64;
@@ -195,6 +197,52 @@ public:
     void clear() {for (auto id:ids) count[id]=0; ids.clear();}
 };
 
+// Workers write adjacent temporary files. Keep existing results intact until
+// all workers finish, including on retries using the same output directory.
+class OutputFiles {
+    struct DirectoryLock {
+        int fd;
+        explicit DirectoryLock(const fs::path& path) {
+            fs::create_directories(path);
+            fd=open(path.c_str(), O_RDONLY | O_DIRECTORY);
+            if (fd<0) throw std::runtime_error("cannot open output directory");
+            if (flock(fd, LOCK_EX)!=0) {
+                close(fd);
+                throw std::runtime_error("cannot lock output directory");
+            }
+        }
+        ~DirectoryLock() { close(fd); }
+    } lock;
+    std::vector<fs::path> destinations;
+public:
+    explicit OutputFiles(const fs::path& output) : lock(output) {
+        for (const auto* name : {"user_daily", "campaign_daily"}) {
+            fs::path dir=output/name;
+            fs::create_directories(dir);
+            size_t parts=dir.filename()=="user_daily" ? shards : 1;
+            std::unordered_set<std::string> expected;
+            for (size_t i=0; i<parts; ++i) {
+                std::string file="part-"+std::to_string(i)+".parquet";
+                destinations.push_back(dir/file);
+                expected.insert(file);
+            }
+            for (const auto& file : fs::directory_iterator(dir)) {
+                if (file.path().extension()==".parquet" &&
+                    (!file.is_regular_file() || !expected.count(file.path().filename().string())))
+                    throw std::runtime_error("use a clean output directory: "+dir.string());
+            }
+        }
+    }
+    fs::path pending(size_t part) const { return destinations.at(part).string()+".tmp"; }
+    void publish() const {
+        for (size_t i=0; i<destinations.size(); ++i) fs::rename(pending(i),destinations[i]);
+    }
+    ~OutputFiles() {
+        std::error_code ignored;
+        for (size_t i=0; i<destinations.size(); ++i) fs::remove(pending(i),ignored);
+    }
+};
+
 void process(size_t bucket, std::vector<ResolvedBucket>& resolved, const Dimensions& dim, const fs::path& output, const Keys& keys, const Identities& links, CampaignTotals& campaigns) {
     size_t linked=(links.size()+shards-1)/shards;
     const auto& unlinked=resolved[bucket].unlinked;
@@ -279,7 +327,7 @@ void process(size_t bucket, std::vector<ResolvedBucket>& resolved, const Dimensi
         for (size_t id=0;id<totals.size();++id)
             if (totals[id].sessions || totals[id].assists) dest.emplace(id,totals[id]);
     }
-    users.save(output/"user_daily"/("part-"+std::to_string(bucket)+".parquet"));
+    users.write_part(output);
 }
 
 void save_campaigns(const std::vector<CampaignTotals>& partial, const Dimensions& dim, const fs::path& output) {
@@ -295,14 +343,14 @@ void save_campaigns(const std::vector<CampaignTotals>& partial, const Dimensions
     daily_output::CampaignColumns ads;
     for (const auto& [day,campaigns] : total) for (const auto& [id,c] : campaigns)
         ads.append(dim.campaign_names[id],dim.channels[id],day,c.sessions,c.purchases,c.revenue,c.assists);
-    ads.save(output/"campaign_daily"/"part-0.parquet");
+    ads.write_part(output);
 }
 }
 
 int main(int argc,char** argv) {
     if (argc!=6) return 2;
     try {
-        fs::path data=argv[1], scratch=argv[2];
+        fs::path data=argv[1], output=argv[2];
         Millis lo=timestamp(argv[3]), hi=timestamp(argv[4]);
         if (lo==invalid_time || hi==invalid_time || hi<=lo) throw std::runtime_error("invalid window");
         unsigned workers=std::clamp(std::stoi(argv[5]),1,64);
@@ -312,6 +360,7 @@ int main(int argc,char** argv) {
             auto now=Clock::now();
             std::cerr<<stage<<" "<<std::chrono::duration<double>(now-previous).count()<<"s\n"; previous=now;
         };
+        OutputFiles files(output);
         Inputs input;
         Dimensions dim(input,data);
         Keys users('u'), event_ids('e');
@@ -342,8 +391,9 @@ int main(int argc,char** argv) {
         parallel(shards,workers,[&](size_t i){resolve_bucket(i,raw,clicks,links,resolved[i]);});
         log("resolve aliases");
         std::vector<CampaignTotals> partial(shards);
-        parallel(shards,workers,[&](size_t i){process(i,resolved,dim,scratch,users,links,partial[i]);});
-        save_campaigns(partial,dim,scratch);
+        parallel(shards,workers,[&](size_t i){process(i,resolved,dim,files.pending(i),users,links,partial[i]);});
+        save_campaigns(partial,dim,files.pending(shards));
+        files.publish();
         log("session and attribution sweep");
     } catch (const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}
 }

@@ -8,3 +8,4 @@
 !native_output.py
 !parquet_output.hpp
 !Makefile
+!parquet_min.hpp

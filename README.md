@@ -1,10 +1,12 @@
 # Shopping Sessions
 
-Compiled C++17 pipeline for the Builders Buildathon Shopping Sessions track. The native engine reads LF-delimited CSV, resolves identities, keeps the earliest event copy, and aggregates in shopper order. Apache Parquet C++ writes each shopper shard directly. DuckDB is available for the SQL reference and output comparisons. Build with `make parser` or use the root Dockerfile. Without the compiled binary, the Python entry point uses the SQL implementation.
+Compiled C++17 pipeline for the Builders Buildathon Shopping Sessions track. The native engine reads LF-delimited CSV, resolves identities, keeps the earliest event copy, and aggregates in shopper order. The team’s dependency-free C++17 writer in `parquet_min.hpp` writes uncompressed PLAIN Parquet into the output directories. Python still dispatches the native binaries. DuckDB is available for the SQL reference and output comparisons. Build with `make parser` or use the root Dockerfile. Without the compiled binary, the Python entry point uses the SQL implementation.
 
 ## Official practice result
 
-The [parallel-links commit](https://github.com/shreyas8182/databricks-shopping-sessions/commit/811cd34df06eff5323839056f1a50afeb649dcec) scored **2.09 s** on hidden practice and was selected for the final when checked. The preceding public checkpoints scored 2.68 s, 6.83 s and 37.43 s.
+The [long-ID lookup commit](https://github.com/shreyas8182/databricks-shopping-sessions/commit/58126896922d20b0f0ece189c665296201ffa5dc) scored **1.9555 s** on hidden practice (receipt `BB-F23515D8`). The writer change has been validated separately. PyArrow read both complete dev tables, and the official comparator returned MATCH with 118,107 shopper rows and 27,449 campaign rows. All 36 official fixtures passed.
+
+The earlier [parallel-links commit](https://github.com/shreyas8182/databricks-shopping-sessions/commit/811cd34df06eff5323839056f1a50afeb649dcec) scored **2.09 s** on hidden practice and was selected for the final when checked. The preceding public checkpoints scored 2.68 s, 6.83 s and 37.43 s.
 
 ## Local 0.75-second target
 
@@ -23,7 +25,7 @@ The following medians use five fresh processes per variant on the same Apple-sil
 | 42 | 1.5345 s | 1.0385 s |
 | 73 | 1.5092 s | 0.9855 s |
 
-Both tables match the SQL reference exactly on both 20M inputs. The candidate also passed all 36 official fixtures, all ten boundary tests, ten independent oracle seeds in their original and reshuffled layouts, and the current official 1M development answer (118,107 user rows and 27,449 campaign rows). The 20M medians remain above 0.75 seconds. There is no official score for this revision.
+Both tables match the SQL reference exactly on both 20M inputs. The candidate also passed all 36 official fixtures, all ten boundary tests, ten independent oracle seeds in their original and reshuffled layouts, and the current official 1M development answer (118,107 user rows and 27,449 campaign rows). The 20M medians remain above 0.75 seconds. This revision subsequently scored 1.9555 s.
 
 ## Native checkpoint
 
@@ -51,7 +53,7 @@ The benchmark reports the largest individual process RSS across the parent and i
 
 ## Run
 
-Use Python 3.12. Install `requirements.txt`, then:
+Use Python 3.12 and a C++17 compiler for the native path. Install `requirements-test.txt` to run the comparison tools.
 
 ```sh
 make parser  # requires a C++17 compiler
