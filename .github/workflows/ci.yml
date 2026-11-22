@@ -39,3 +39,17 @@ jobs:
             -e NCPU=2 -e MEMORY_LIMIT=4GB \
             -v "$PWD/data/dev:/data:ro" -v "$PWD/out/dev:/output" -v "$PWD/scratch:/scratch" shopping-sessions
       - run: make check-dev
+      - name: Run all official fixtures through the container entrypoint
+        shell: bash
+        run: |
+          cat > "${RUNNER_TEMP}/run-shopping-fixture" <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          chmod 755 "$2"
+          sudo chown 1000:1000 "$2"
+          docker run --rm --platform linux/amd64 --cpus=8 --memory=24g --memory-swap=24g \
+            --pids-limit=4096 --network=none --read-only --user=1000:1000 --tmpfs /tmp:rw,size=64m \
+            -e NCPU=8 -v "$1:/data:ro" -v "$2:/output" -v "$PWD/scratch:/scratch" shopping-sessions
+          SH
+          chmod +x "${RUNNER_TEMP}/run-shopping-fixture"
+          python vendor/starter-duckdb/scripts/run_fixtures.py "$PWD/vendor/starter-duckdb/fixtures" -- "${RUNNER_TEMP}/run-shopping-fixture"
