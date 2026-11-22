@@ -165,44 +165,42 @@ template<size_t Width,class Visitor>
 void scan(Text bytes, Visitor visit) {
 #if defined(__x86_64__) || defined(__aarch64__)
     std::array<Text,Width> fields;
-    while (bytes.size()>=128) {
-        const char* p=bytes.data();
-        auto low=line_masks(p);
-        LineMasks high;
-        size_t offset=0;
-        if (!low.newlines) {
-            high=line_masks(p+64); offset=64;
-            if (!high.newlines) {
-                size_t n=bytes.find('\n',128);
-                n=n==Text::npos ? bytes.size() : n+1;
-                scan_scalar<Width>(bytes.substr(0,n),visit); bytes.remove_prefix(n); continue;
+    const char* row=bytes.data();
+    const char* field=row;
+    size_t column=0;
+    unsigned carried_quotes=0;
+    bool valid=true;
+    for (size_t offset=0; offset+64<=bytes.size(); offset+=64) {
+        const char* block=bytes.data()+offset;
+        auto masks=line_masks(block);
+        while (masks.separators) {
+            uint64_t bit=masks.separators & -masks.separators;
+            const char* end=block+__builtin_ctzll(bit);
+            const uint64_t before=bit-1;
+            unsigned quotes=carried_quotes+__builtin_popcountll(masks.quotes & before);
+            masks.quotes &= ~before;
+            carried_quotes=0;
+            if (column<Width) {
+                size_t length=end-field;
+                if (!quotes) fields[column]=Text(field,length);
+                else if (quotes==2 && length>=2 && field[0]=='"' && end[-1]=='"')
+                    fields[column]=Text(field+1,length-2);
+                else valid=false;
+                ++column;
+            } else valid=false;
+            field=end+1;
+            if (masks.newlines & bit) {
+                if (valid && column==Width) visit(fields);
+                row=field;
+                valid=true;
+                column=0;
             }
+            masks.separators &= masks.separators-1;
         }
-        auto& last=offset ? high : low;
-        uint64_t lf=last.newlines & -last.newlines;
-        last.quotes &= lf-1; last.separators &= lf|(lf-1);
-        size_t n=offset+__builtin_ctzll(lf);
-        bytes.remove_prefix(n+1);
-        if (__builtin_popcountll(low.separators)+__builtin_popcountll(high.separators)!=Width) continue;
-        // Every quote must be adjacent to a delimiter or the start of the row.
-        uint64_t allowed=(low.separators<<1)|(low.separators>>1)|1|(high.separators<<63);
-        if (low.quotes & ~allowed) continue;
-        allowed=(high.separators<<1)|(high.separators>>1)|(low.separators>>63);
-        if (high.quotes & ~allowed) continue;
-        size_t start=0;
-        bool valid=true;
-        for (size_t i=0;i<Width;++i) {
-            size_t end;
-            if (low.separators) {end=__builtin_ctzll(low.separators);low.separators&=low.separators-1;}
-            else {end=64+__builtin_ctzll(high.separators);high.separators&=high.separators-1;}
-            size_t length=end-start;
-            bool quoted=p[start]=='"';
-            if ((length && (p[end-1]=='"')!=quoted) || (quoted && length<2)) {valid=false;break;}
-            fields[i]=Text(p+start+quoted,length-2*quoted);
-            start=end+1;
-        }
-        if (valid) visit(fields);
+        carried_quotes=std::min(3u,carried_quotes+unsigned(__builtin_popcountll(masks.quotes)));
     }
+    // Reparse only the final unfinished record and short tail.
+    if (!bytes.empty()) bytes.remove_prefix(size_t(row-bytes.data()));
 #endif
     scan_scalar<Width>(bytes,visit);
 }
