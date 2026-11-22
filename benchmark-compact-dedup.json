@@ -1,0 +1,206 @@
+{
+  "parent": "5e72bce42e7810d0e069d9508838f6f211a74769",
+  "candidate": "d240228925218d07699cae70151b08c3d7005407",
+  "generator_zip_sha256": "78f973f75d14b48e792628284f19c75de71fa597d20952e16a9ced93c78bee4a",
+  "method": "Apple silicon macOS, 8 requested workers, no CPU pinning or cache eviction. Timed complete native launcher processes and file close, clearing generated Parquet before each run. One workload process at a time. Within each seed, parent and candidate ran in alternating AB/BA order. Trial 1 is a conditioning pair and is shown separately. The median uses trials 2\u20134. Exploratory trials with resource contention excluded. No contest submission.",
+  "correctness": "36 official fixtures, 10 boundary tests, current official 1M CSV answers. Both output tables matched parent with bidirectional EXCEPT ALL for each of the three seeds.",
+  "summary": [
+    {
+      "seed": 42,
+      "events": 20000000,
+      "clicks": 5000000,
+      "parent_first": 1.37861,
+      "parent_median": 0.74097,
+      "candidate_first": 0.64848,
+      "candidate_median": 0.66001
+    },
+    {
+      "seed": 73,
+      "events": 20000000,
+      "clicks": 5000000,
+      "parent_first": 1.76297,
+      "parent_median": 0.72228,
+      "candidate_first": 0.64728,
+      "candidate_median": 0.63165
+    },
+    {
+      "seed": 7,
+      "events": 60000000,
+      "clicks": 15000000,
+      "parent_first": 4.55583,
+      "parent_median": 2.28688,
+      "candidate_first": 2.07043,
+      "candidate_median": 2.03165
+    }
+  ],
+  "runs": [
+    {
+      "seed": 42,
+      "kind": "parent",
+      "trial": 1,
+      "seconds": 1.37861,
+      "stages": "map inputs 0.114242s\nparse inputs and link identities 0.799393s\ndeduplicate 0.0933931s\nresolve aliases 0.168705s\nsession and attribution sweep 0.129299s\nuser 4.126 sys 1.009 minflt 170909 majflt 127407 maxrss 4485 MiB\n"
+    },
+    {
+      "seed": 42,
+      "kind": "candidate",
+      "trial": 1,
+      "seconds": 0.64848,
+      "stages": "map inputs 0.0145684s\nparse inputs and link identities 0.262037s\ndeduplicate 0.073356s\nresolve aliases 0.107256s\nsession and attribution sweep 0.126417s\nuser 3.738 sys 0.526 minflt 301942 majflt 2 maxrss 4471 MiB\n"
+    },
+    {
+      "seed": 42,
+      "kind": "candidate",
+      "trial": 2,
+      "seconds": 0.67307,
+      "stages": "map inputs 0.0137589s\nparse inputs and link identities 0.263849s\ndeduplicate 0.074846s\nresolve aliases 0.124077s\nsession and attribution sweep 0.147649s\nuser 3.805 sys 0.597 minflt 312330 majflt 2 maxrss 4514 MiB\n"
+    },
+    {
+      "seed": 42,
+      "kind": "parent",
+      "trial": 2,
+      "seconds": 0.75004,
+      "stages": "map inputs 0.0141271s\nparse inputs and link identities 0.282176s\ndeduplicate 0.0904173s\nresolve aliases 0.169333s\nsession and attribution sweep 0.128001s\nuser 4.481 sys 0.545 minflt 300576 majflt 2 maxrss 4461 MiB\n"
+    },
+    {
+      "seed": 42,
+      "kind": "parent",
+      "trial": 3,
+      "seconds": 0.74097,
+      "stages": "map inputs 0.0141597s\nparse inputs and link identities 0.268637s\ndeduplicate 0.0918694s\nresolve aliases 0.172674s\nsession and attribution sweep 0.126753s\nuser 4.421 sys 0.518 minflt 302374 majflt 2 maxrss 4471 MiB\n"
+    },
+    {
+      "seed": 42,
+      "kind": "candidate",
+      "trial": 3,
+      "seconds": 0.66001,
+      "stages": "map inputs 0.0137913s\nparse inputs and link identities 0.266082s\ndeduplicate 0.06994s\nresolve aliases 0.11223s\nsession and attribution sweep 0.132562s\nuser 3.768 sys 0.551 minflt 305183 majflt 2 maxrss 4464 MiB\n"
+    },
+    {
+      "seed": 42,
+      "kind": "candidate",
+      "trial": 4,
+      "seconds": 0.65784,
+      "stages": "map inputs 0.0141335s\nparse inputs and link identities 0.262679s\ndeduplicate 0.0707943s\nresolve aliases 0.117951s\nsession and attribution sweep 0.14275s\nuser 3.765 sys 0.543 minflt 310454 majflt 2 maxrss 4472 MiB\n"
+    },
+    {
+      "seed": 42,
+      "kind": "parent",
+      "trial": 4,
+      "seconds": 0.74063,
+      "stages": "map inputs 0.014495s\nparse inputs and link identities 0.266429s\ndeduplicate 0.0904552s\nresolve aliases 0.174539s\nsession and attribution sweep 0.13035s\nuser 4.440 sys 0.527 minflt 301482 majflt 2 maxrss 4453 MiB\n"
+    },
+    {
+      "seed": 73,
+      "kind": "parent",
+      "trial": 1,
+      "seconds": 1.76297,
+      "stages": "map inputs 0.108541s\nparse inputs and link identities 1.01431s\ndeduplicate 0.163396s\nresolve aliases 0.234719s\nsession and attribution sweep 0.158615s\nuser 4.285 sys 2.000 minflt 328834 majflt 124192 maxrss 3822 MiB\n"
+    },
+    {
+      "seed": 73,
+      "kind": "candidate",
+      "trial": 1,
+      "seconds": 0.64728,
+      "stages": "map inputs 0.0148227s\nparse inputs and link identities 0.258982s\ndeduplicate 0.0606339s\nresolve aliases 0.119565s\nsession and attribution sweep 0.126815s\nuser 3.676 sys 0.539 minflt 300981 majflt 24 maxrss 4378 MiB\n"
+    },
+    {
+      "seed": 73,
+      "kind": "candidate",
+      "trial": 2,
+      "seconds": 0.62767,
+      "stages": "map inputs 0.0150014s\nparse inputs and link identities 0.254959s\ndeduplicate 0.0647577s\nresolve aliases 0.106644s\nsession and attribution sweep 0.121175s\nuser 3.604 sys 0.501 minflt 295972 majflt 2 maxrss 4369 MiB\n"
+    },
+    {
+      "seed": 73,
+      "kind": "parent",
+      "trial": 2,
+      "seconds": 0.70952,
+      "stages": "map inputs 0.0153117s\nparse inputs and link identities 0.262194s\ndeduplicate 0.0787641s\nresolve aliases 0.173449s\nsession and attribution sweep 0.120697s\nuser 4.260 sys 0.506 minflt 294357 majflt 4 maxrss 4357 MiB\n"
+    },
+    {
+      "seed": 73,
+      "kind": "parent",
+      "trial": 3,
+      "seconds": 0.72668,
+      "stages": "map inputs 0.01506s\nparse inputs and link identities 0.261198s\ndeduplicate 0.0801908s\nresolve aliases 0.175913s\nsession and attribution sweep 0.126052s\nuser 4.286 sys 0.519 minflt 295363 majflt 2 maxrss 4365 MiB\n"
+    },
+    {
+      "seed": 73,
+      "kind": "candidate",
+      "trial": 3,
+      "seconds": 0.63165,
+      "stages": "map inputs 0.0149722s\nparse inputs and link identities 0.257918s\ndeduplicate 0.0673088s\nresolve aliases 0.105492s\nsession and attribution sweep 0.123382s\nuser 3.654 sys 0.524 minflt 297289 majflt 2 maxrss 4395 MiB\n"
+    },
+    {
+      "seed": 73,
+      "kind": "candidate",
+      "trial": 4,
+      "seconds": 0.63334,
+      "stages": "map inputs 0.0152335s\nparse inputs and link identities 0.254494s\ndeduplicate 0.0678929s\nresolve aliases 0.109527s\nsession and attribution sweep 0.12158s\nuser 3.610 sys 0.532 minflt 296132 majflt 2 maxrss 4379 MiB\n"
+    },
+    {
+      "seed": 73,
+      "kind": "parent",
+      "trial": 4,
+      "seconds": 0.72228,
+      "stages": "map inputs 0.0151818s\nparse inputs and link identities 0.261972s\ndeduplicate 0.080927s\nresolve aliases 0.17577s\nsession and attribution sweep 0.122143s\nuser 4.272 sys 0.520 minflt 296784 majflt 2 maxrss 4363 MiB\n"
+    },
+    {
+      "seed": 7,
+      "kind": "parent",
+      "trial": 1,
+      "seconds": 4.55583,
+      "stages": "map inputs 0.0827669s\nparse inputs and link identities 1.94791s\ndeduplicate 1.26975s\nresolve aliases 0.744122s\nsession and attribution sweep 0.383447s\nuser 13.820 sys 6.941 minflt 1423319 majflt 112187 maxrss 11968 MiB\n"
+    },
+    {
+      "seed": 7,
+      "kind": "candidate",
+      "trial": 1,
+      "seconds": 2.07043,
+      "stages": "map inputs 0.050055s\nparse inputs and link identities 0.793395s\ndeduplicate 0.182036s\nresolve aliases 0.513449s\nsession and attribution sweep 0.409934s\nuser 11.713 sys 1.978 minflt 1020959 majflt 11 maxrss 12047 MiB\n"
+    },
+    {
+      "seed": 7,
+      "kind": "candidate",
+      "trial": 2,
+      "seconds": 2.03165,
+      "stages": "map inputs 0.0496705s\nparse inputs and link identities 0.799717s\ndeduplicate 0.174634s\nresolve aliases 0.462187s\nsession and attribution sweep 0.424842s\nuser 11.511 sys 1.967 minflt 1000270 majflt 2 maxrss 12116 MiB\n"
+    },
+    {
+      "seed": 7,
+      "kind": "parent",
+      "trial": 2,
+      "seconds": 2.27351,
+      "stages": "map inputs 0.0536505s\nparse inputs and link identities 0.786978s\ndeduplicate 0.223885s\nresolve aliases 0.672284s\nsession and attribution sweep 0.42464s\nuser 13.718 sys 1.881 minflt 973918 majflt 7 maxrss 12125 MiB\n"
+    },
+    {
+      "seed": 7,
+      "kind": "parent",
+      "trial": 3,
+      "seconds": 2.29139,
+      "stages": "map inputs 0.0531138s\nparse inputs and link identities 0.793125s\ndeduplicate 0.22056s\nresolve aliases 0.697175s\nsession and attribution sweep 0.411584s\nuser 13.810 sys 1.968 minflt 1013450 majflt 17 maxrss 12043 MiB\n"
+    },
+    {
+      "seed": 7,
+      "kind": "candidate",
+      "trial": 3,
+      "seconds": 2.02288,
+      "stages": "map inputs 0.0505014s\nparse inputs and link identities 0.802152s\ndeduplicate 0.174549s\nresolve aliases 0.459712s\nsession and attribution sweep 0.424412s\nuser 11.507 sys 1.993 minflt 993627 majflt 4 maxrss 12034 MiB\n"
+    },
+    {
+      "seed": 7,
+      "kind": "candidate",
+      "trial": 4,
+      "seconds": 2.04853,
+      "stages": "map inputs 0.0484341s\nparse inputs and link identities 0.791057s\ndeduplicate 0.159308s\nresolve aliases 0.512212s\nsession and attribution sweep 0.416043s\nuser 11.491 sys 2.035 minflt 1028512 majflt 467 maxrss 12083 MiB\n"
+    },
+    {
+      "seed": 7,
+      "kind": "parent",
+      "trial": 4,
+      "seconds": 2.28688,
+      "stages": "map inputs 0.0534118s\nparse inputs and link identities 0.796517s\ndeduplicate 0.219984s\nresolve aliases 0.691454s\nsession and attribution sweep 0.412233s\nuser 13.776 sys 1.978 minflt 1016243 majflt 27 maxrss 11986 MiB\n"
+    }
+  ]
+}

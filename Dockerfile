@@ -1,14 +1,14 @@
-FROM gcc:14-bookworm AS parser-build
-WORKDIR /build
-COPY parse_csv.cpp .
-RUN g++ -std=c++17 -O3 -static-libstdc++ -static-libgcc parse_csv.cpp -o parse_csv
-
-FROM python:3.12-slim-bookworm
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 NCPU=8 MEMORY_LIMIT=16GB TMPDIR=/scratch HOME=/scratch
+FROM debian:bookworm-slim AS libraries
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY pipeline.py .
-COPY --from=parser-build /build/parse_csv .
+
+FROM libraries AS build
+RUN apt-get update && apt-get install -y --no-install-recommends g++ make && rm -rf /var/lib/apt/lists/*
+COPY native_sweep.cpp native_input.hpp parquet_output.hpp parquet_min.hpp parse_csv.cpp run.cpp Makefile ./
+RUN make parser && mkdir /built && cp run native_sweep /built/ && if [ -f native_sweep_avx2 ]; then cp native_sweep_avx2 /built/; fi
+
+FROM debian:bookworm-slim
+WORKDIR /app
+ENV NCPU=8 HOME=/scratch TMPDIR=/scratch
+COPY --from=build /built/ ./
 USER 1000:1000
-ENTRYPOINT ["python", "/app/pipeline.py"]
+ENTRYPOINT ["/app/run"]

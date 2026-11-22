@@ -1,0 +1,88 @@
+{
+  "project": "Databricks Shopping Sessions",
+  "test_date": "2026-11-21",
+  "machine": "arm64",
+  "os": "Darwin",
+  "threads": 8,
+  "cpu_affinity": "not pinned",
+  "disk_cache": "not reset; ordinary CLI runs followed earlier validation passes",
+  "official_score_for_this_candidate": null,
+  "local_gate_seconds": 0.75,
+  "cli_method": "Elapsed wall time around a new python pipeline.py process with DATA_DIR, OUTPUT_DIR, SCRATCH_DIR and NCPU set; fresh output folder for each run; seed order alternated.",
+  "inputs": {
+    "42": {
+      "generator_seed": 42,
+      "events": 20000000,
+      "clicks": 5000000,
+      "benchmark_py_seconds": [
+        1.239,
+        0.679,
+        0.662,
+        0.674,
+        0.656
+      ],
+      "max_single_process_rss_bytes": 4710416384,
+      "differing_rows_vs_scored_sql_reference": {
+        "user_daily": 0,
+        "campaign_daily": 0
+      },
+      "cli_seconds": [
+        0.6513,
+        0.6501,
+        0.6492,
+        0.6585,
+        0.65
+      ],
+      "cli_median_seconds": 0.6501
+    },
+    "73": {
+      "generator_seed": 73,
+      "events": 20000000,
+      "clicks": 5000000,
+      "benchmark_py_seconds": [
+        1.231,
+        0.657,
+        0.644,
+        0.643,
+        0.642
+      ],
+      "max_single_process_rss_bytes": 4649025536,
+      "differing_rows_vs_scored_sql_reference": {
+        "user_daily": 0,
+        "campaign_daily": 0
+      },
+      "cli_seconds": [
+        0.6469,
+        0.6402,
+        0.6408,
+        0.6314,
+        0.6368
+      ],
+      "cli_median_seconds": 0.6402
+    },
+    "7": {
+      "generator_seed": 7,
+      "events": 60000000,
+      "clicks": 15000000,
+      "benchmark_py_seconds": [
+        4.511,
+        1.962,
+        1.967
+      ],
+      "max_single_process_rss_bytes": 12491309056,
+      "differing_rows_vs_scored_sql_reference": {
+        "user_daily": 0,
+        "campaign_daily": 0
+      }
+    }
+  },
+  "source_sha256": {
+    "native_sweep.cpp": "3d98d78b7157ff1e2481efffff4b6d28d03cd8aa7393af8af8a500e751b16bc2",
+    "native_input.hpp": "567f8dd5e68612c65d2e06e5da694ea8ea2d7f43b468b83575cf718fd63472fa",
+    "native_output.py": "c0120a291268fc4d808ebd4df4052cd9a5fe452942939cf87c405f2f804fc3a2",
+    "parquet_output.hpp": "901488c5ac4544af4c6054dda18adc892f51b7af15625d0eb85c4e01b5eb9975",
+    "pipeline.py": "c79d08de3119eb393e28e6d56535212eb9b7fa88c48d22ad869bc72b20be2a30",
+    "Dockerfile": "4f1d6b636c45faf6cd31384e52fdbad4b6956e92f1880aac4ce76e3841d49f95",
+    "Makefile": "f3013629a17bff8be617109db01d6421cd8f9ab6112e136dbbb5fcbe079fea54"
+  }
+}

@@ -11,10 +11,6 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: pip install -r requirements-test.txt
       - name: Download official test material
         shell: bash
         run: |
@@ -23,8 +19,11 @@ jobs:
             curl --fail --location --retry 3 "https://www.joinbuilders.org/buildathon/tracks/shopping-sessions/files/$name.zip" -o "vendor/$name.zip"
             unzip -q "vendor/$name.zip" -d vendor
           done
+          curl --fail --location --retry 3 https://github.com/duckdb/duckdb/releases/download/v1.4.2/duckdb_cli-linux-amd64.zip -o /tmp/duckdb.zip
+          unzip -q /tmp/duckdb.zip -d /tmp/duckdb
+          echo "/tmp/duckdb" >> "$GITHUB_PATH"
       - run: cargo build --release --manifest-path vendor/generator/Cargo.toml
-      - run: make test fixtures differential
+      - run: make fixtures
       - name: Generate development input
         run: vendor/generator/target/release/generate --seed 1 --events 1000000 --clicks 250000 --output data/dev
       - name: Build scorer image
@@ -39,3 +38,58 @@ jobs:
             -e NCPU=2 -e MEMORY_LIMIT=4GB \
             -v "$PWD/data/dev:/data:ro" -v "$PWD/out/dev:/output" -v "$PWD/scratch:/scratch" shopping-sessions
       - run: make check-dev
+      - name: Run all official fixtures through the container entrypoint
+        shell: bash
+        run: |
+          cat > "${RUNNER_TEMP}/run-shopping-fixture" <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          chmod 755 "$2"
+          sudo chown 1000:1000 "$2"
+          trap 'sudo chown -R "$(id -u):$(id -g)" "$2"' EXIT
+          cpus=$(nproc)
+          if (( cpus > 8 )); then cpus=8; fi
+          docker run --rm --platform linux/amd64 --cpus="$cpus" --memory=24g --memory-swap=24g \
+            --pids-limit=4096 --network=none --read-only --user=1000:1000 --tmpfs /tmp:rw,size=64m \
+            -e NCPU="$cpus" -v "$1:/data:ro" -v "$2:/output" -v "$PWD/scratch:/scratch" shopping-sessions
+          SH
+          chmod +x "${RUNNER_TEMP}/run-shopping-fixture"
+          ./check_native fixtures "$PWD/vendor/starter-duckdb/fixtures" "${RUNNER_TEMP}/run-shopping-fixture"
+  profile:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/perf/native-entrypoint')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate the official seed-42 dataset
+        run: |
+          curl -fsSL --retry 3 https://www.joinbuilders.org/buildathon/tracks/shopping-sessions/files/generator.zip -o /tmp/generator.zip
+          echo "78f973f75d14b48e792628284f19c75de71fa597d20952e16a9ced93c78bee4a  /tmp/generator.zip" | sha256sum -c -
+          unzip -q /tmp/generator.zip -d /tmp/profile-source
+          cargo build --release --manifest-path /tmp/profile-source/generator/Cargo.toml
+          /tmp/profile-source/generator/target/release/generate --seed 42 --events 20000000 --clicks 5000000 --output data/profile
+      - name: Profile the native container
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build -t shopping-profile .
+          for kind in events clicks links; do
+            echo "$kind" >> profile.log
+            LC_ALL=C awk -F, 'NR>1000000{exit} NR>1{print length($1), length($2)}' "data/profile/$kind/part-00000.csv" | sort | uniq -c | sort -rn | sed -n '1,5p' >> profile.log
+          done
+          head -3 data/profile/events/part-00000.csv >> profile.log
+          for pass in count timed1 timed2 timed3; do
+            mkdir -p "out/$pass"
+            sudo chown 1000:1000 "out/$pass"
+            count=0
+            if [[ "$pass" == count ]]; then count=1; fi
+            echo "$pass" >> profile.log
+            docker run --rm --read-only --network none --user 1000 --cpus 4 --memory 12g --memory-swap 12g -e SS_TIMING=1 -e SS_COUNT_KEYS="$count" -e NCPU=4 -v "$PWD/data/profile:/data:ro" -v "$PWD/out/$pass:/output" shopping-profile >> profile.log 2>&1
+          done
+          cat profile.log
+          (echo '~~~'; cat profile.log; echo '~~~') >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-seed42-profile
+          path: profile.log
