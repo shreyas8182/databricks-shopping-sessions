@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cstdlib>
+#include <cstdio>
+#include <sys/resource.h>
 #include <charconv>
 #include <chrono>
 #include <cstring>
@@ -270,6 +273,33 @@ inline uint64_t key_hash(Key key) {
 
 // Ordinary short ASCII suffixes fit in one word. All exceptional byte strings
 // are interned by their complete value in a disjoint key space.
+struct Profile {
+    bool timing = enabled("SS_TIMING"), count = enabled("SS_COUNT_KEYS");
+    std::atomic<uint64_t> event{0}, user{0};
+    static bool enabled(const char* name) {
+        const char* value = std::getenv(name);
+        return value && std::string_view(value) == "1";
+    }
+    ~Profile() {
+        if (count) std::fprintf(stderr, "slow_keys %llu event %llu user %llu\n",
+            (unsigned long long)(event.load()+user.load()), (unsigned long long)event.load(),
+            (unsigned long long)user.load());
+        if (!timing) return;
+        rusage usage{};
+        if (getrusage(RUSAGE_SELF, &usage)) return;
+        auto seconds = [](timeval t) { return t.tv_sec + t.tv_usec / 1e6; };
+#ifdef __APPLE__
+        constexpr long units = 1024 * 1024;
+#else
+        constexpr long units = 1024;
+#endif
+        std::fprintf(stderr, "user %.3f sys %.3f minflt %ld majflt %ld maxrss %ld MiB\n",
+            seconds(usage.ru_utime), seconds(usage.ru_stime), usage.ru_minflt, usage.ru_majflt,
+            usage.ru_maxrss / units);
+    }
+};
+inline Profile profile;
+
 class Keys {
     struct Extra {
         std::mutex lock;
@@ -316,6 +346,7 @@ public:
             if (n<8) padded |= (~Key{0})<<(8*n);
             if (!(word&high) && !((padded-0x0101010101010101ULL)&~padded&high)) return word;
         }
+        if (profile.count) (prefix=='e' ? profile.event : profile.user).fetch_add(1, std::memory_order_relaxed);
         size_t hash=std::hash<Text>{}(s);
         size_t lane=hash%extras.size();
         auto& extra=extras[lane];
