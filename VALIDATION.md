@@ -22,7 +22,7 @@ for name in starter-duckdb generator dev-answer; do
   unzip -q "vendor/$name.zip" -d vendor
 done
 cargo build --release --manifest-path vendor/generator/Cargo.toml
-python -m pip install -r requirements-test.txt
+Download the DuckDB CLI for the host and place it on `PATH` for `check_native`.
 make test fixtures differential dev check-dev
 ```
 
@@ -37,11 +37,11 @@ Checksums (SHA-256) of the artifacts actually tested:
 
 ## Scale and environment limits
 
-`benchmark.py` measures process start through exit, records peak process RSS, and verifies daily-key uniqueness, matching cross-table session/revenue totals, and the assist lower bound. These invariants do not prove every hidden answer correct.
+`benchmark_native` measures process start through exit. The native validator checks daily-key uniqueness, matching cross-table session/revenue totals, and the assist lower bound. These invariants do not prove every hidden answer correct.
 
 ```sh
 vendor/generator/target/release/generate --seed 7 --events 60000000 --clicks 15000000 --output data/scale60m
-MEMORY_LIMIT=16GB python benchmark.py data/scale60m out/scale60m --runs 3 --report benchmark-60m.json
+make benchmark DATA=data/scale60m OUTPUT=out/scale60m RUNS=3
 ```
 
 The local machine runs Apple-silicon native code with eight configured DuckDB threads; CPUs are not pinned and operating-system caches are not reset. These timings do not predict the contest's linux/amd64 score. A 10GB engine memory stress test failed in 60M deduplication; the first 16GB run completed in 54.3 seconds. Use the documented resource settings, and retest unseen seeds before submission.
