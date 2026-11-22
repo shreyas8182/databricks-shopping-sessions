@@ -47,9 +47,12 @@ jobs:
           set -euo pipefail
           chmod 755 "$2"
           sudo chown 1000:1000 "$2"
-          docker run --rm --platform linux/amd64 --cpus=8 --memory=24g --memory-swap=24g \
+          trap 'sudo chown -R "$(id -u):$(id -g)" "$2"' EXIT
+          cpus=$(nproc)
+          if (( cpus > 8 )); then cpus=8; fi
+          docker run --rm --platform linux/amd64 --cpus="$cpus" --memory=24g --memory-swap=24g \
             --pids-limit=4096 --network=none --read-only --user=1000:1000 --tmpfs /tmp:rw,size=64m \
-            -e NCPU=8 -v "$1:/data:ro" -v "$2:/output" -v "$PWD/scratch:/scratch" shopping-sessions
+            -e NCPU="$cpus" -v "$1:/data:ro" -v "$2:/output" -v "$PWD/scratch:/scratch" shopping-sessions
           SH
           chmod +x "${RUNNER_TEMP}/run-shopping-fixture"
           python vendor/starter-duckdb/scripts/run_fixtures.py "$PWD/vendor/starter-duckdb/fixtures" -- "${RUNNER_TEMP}/run-shopping-fixture"
