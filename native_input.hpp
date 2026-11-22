@@ -273,8 +273,32 @@ inline uint64_t key_hash(Key key) {
 class Keys {
     struct Extra {
         std::mutex lock;
-        std::unordered_map<Text,uint64_t> ids;
+        struct Slot { size_t hash=0; size_t position=0; };
+        std::vector<Slot> slots=std::vector<Slot>(32);
         std::vector<Text> bytes;
+
+        size_t insert(Text value, size_t hash) {
+            size_t mask=slots.size()-1;
+            size_t i=(hash>>6)&mask;
+            while (slots[i].position) {
+                if (slots[i].hash==hash && bytes[slots[i].position-1]==value)
+                    return slots[i].position-1;
+                i=(i+1)&mask;
+            }
+            bytes.push_back(value);
+            slots[i]={hash,bytes.size()};
+            if (bytes.size()*10>slots.size()*7) {
+                std::vector<Slot> grown(slots.size()*2);
+                mask=grown.size()-1;
+                for (auto slot:slots) if (slot.position) {
+                    size_t j=(slot.hash>>6)&mask;
+                    while (grown[j].position) j=(j+1)&mask;
+                    grown[j]=slot;
+                }
+                slots.swap(grown);
+            }
+            return bytes.size()-1;
+        }
     };
     std::array<Extra,64> extras;
     char prefix;
@@ -292,12 +316,11 @@ public:
             if (n<8) padded |= (~Key{0})<<(8*n);
             if (!(word&high) && !((padded-0x0101010101010101ULL)&~padded&high)) return word;
         }
-        auto lane=std::hash<Text>{}(s)%extras.size();
+        size_t hash=std::hash<Text>{}(s);
+        size_t lane=hash%extras.size();
         auto& extra=extras[lane];
         std::lock_guard<std::mutex> lock(extra.lock);
-        auto [it,fresh]=extra.ids.emplace(s,extra.bytes.size());
-        if (fresh) extra.bytes.push_back(s);
-        return indirect | (it->second<<6) | lane;
+        return indirect | (extra.insert(s,hash)<<6) | lane;
     }
     // Call after all encoders have joined. The caller owns short-key storage.
     Text decode(Key k, std::array<char,9>& buf) const {

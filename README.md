@@ -12,6 +12,19 @@ This branch assigns dense canonical shopper numbers before sorting events and cl
 
 Both complete tables matched the scored SQL reference at both 20M seeds and at 60M events on seed 7. All 36 official fixtures, ten additional tests, the official 1M answers, and ten shuffled differential seeds passed. This dense-person revision has been tested locally and has no contest score. See [measurements and source hashes](benchmark-local-gate.json).
 
+## Current generator benchmark
+
+The live generator emits mixed short and long IDs. The native parser now interns exceptional IDs in a contiguous hash table, comparing the full identifier bytes on hash matches. This preserves identifier equality and reduces allocation overhead.
+
+The following medians use five fresh processes per variant on the same Apple-silicon host, with eight configured threads, clean output directories, and alternating baseline/candidate order. The OS page cache was not reset. Both inputs contain 20 million events and 5 million clicks from the current official generator (ZIP SHA-256 `78f973f75d14b48e792628284f19c75de71fa597d20952e16a9ced93c78bee4a`).
+
+| Seed | Dense-person baseline | Contiguous ID table |
+| --- | ---: | ---: |
+| 42 | 1.5345 s | 1.0385 s |
+| 73 | 1.5092 s | 0.9855 s |
+
+Both tables match the SQL reference exactly on both 20M inputs. The candidate also passed all 36 official fixtures, all ten boundary tests, ten independent oracle seeds in their original and reshuffled layouts, and the current official 1M development answer (118,107 user rows and 27,449 campaign rows). The 20M medians remain above 0.75 seconds. There is no official score for this revision.
+
 ## Native checkpoint
 
 The scored SQL baseline at `2d0c3f8` earned **37.43 s** in hidden practice. On the local Apple machine, three runs of the compiled path took 3.069 / 2.906 / 2.922 s for 20M events (seed 42) and 12.328 / 8.667 / 8.630 s for 60M (seed 7). Both complete tables matched the baseline at each scale in duplicate-sensitive comparisons. Local timings include process startup and Parquet close. Page caches were not reset. This first native checkpoint was benchmarked locally.
