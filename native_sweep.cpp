@@ -1,5 +1,5 @@
 #include "parquet_output.hpp"
-#include <future>
+#include <optional>
 #include <tuple>
 #include <sys/file.h>
 #include <unordered_set>
@@ -53,13 +53,13 @@ struct Dimensions {
 };
 
 struct Sale { Millis t; int cents, category; };
-struct Ticket { Key id; Millis ingest; uint32_t row, block; };
+struct Ticket { Key id; Millis ingest; uint32_t row, probe; };
 struct Click { Key user; Text id; Millis t; int campaign; };
 struct Event { Key person; Sale sale; };
 template<class Row> using Buckets=std::array<std::vector<Row>,shards>;
 struct EventBlock { Buckets<Event> events; Buckets<Ticket> tickets; };
 
-void read_events(Text input, uint32_t block, EventBlock& dst, const Dimensions& dim,
+void read_events(Text input, EventBlock& dst, const Dimensions& dim,
                  Keys& users, Keys& ids, Millis lo, Millis hi) {
     size_t expected=input.size()/(82*shards)+16;
     for (size_t i=0;i<shards;++i) {
@@ -88,7 +88,8 @@ void read_events(Text input, uint32_t block, EventBlock& dst, const Dimensions& 
                 target.push_back({person,sale});
             }
         }
-        dst.tickets[shard(id)].push_back({id,ingest,row,block});
+        const uint64_t hash=key_hash(id);
+        dst.tickets[hash%shards].push_back({id,ingest,row,uint32_t(hash/shards)});
     });
 }
 
@@ -96,19 +97,24 @@ void dedup(size_t lane, std::vector<EventBlock>& blocks) {
     size_t count=0;
     for (auto& block:blocks) count+=block.tickets[lane].size();
     size_t capacity=1; while(capacity<count+count/2+1) capacity*=2;
-    struct Winner {Key key=0; const Ticket* row=nullptr;};
+    struct Winner {const Ticket* ticket=nullptr; uint32_t block=0;};
     std::vector<Winner> winners(capacity);
-    for (auto& block:blocks) for (const auto& ticket:block.tickets[lane]) {
-        size_t slot=(key_hash(ticket.id)/shards)&(capacity-1);
-        while (winners[slot].key && !equal_key(winners[slot].key,ticket.id)) slot=(slot+1)&(capacity-1);
-        auto& winner=winners[slot];
-        if (!winner.key) {winner={ticket.id,&ticket}; continue;}
-        const Ticket* loser=&ticket;
-        if (ticket.ingest<winner.row->ingest) std::swap(loser,winner.row);
-        // Each event belongs to exactly one ID lane. Distinct lanes can safely
-        // mark their own losers without an atomic operation on every winner.
-        if (loser->row!=UINT32_MAX)
-            blocks[loser->block].events[loser->row%shards][loser->row/shards].sale.t=invalid_time;
+    for (uint32_t block=0; block<blocks.size(); ++block) {
+        for (const Ticket& ticket:blocks[block].tickets[lane]) {
+            size_t slot=ticket.probe & (capacity-1);
+            while (winners[slot].ticket) {
+                const Ticket& stored=*winners[slot].ticket;
+                if (stored.probe==ticket.probe && equal_key(stored.id,ticket.id)) break;
+                slot=(slot+1)&(capacity-1);
+            }
+            auto& winner=winners[slot];
+            Winner incoming{&ticket,block};
+            if (!winner.ticket) {winner=incoming; continue;}
+            if (ticket.ingest<winner.ticket->ingest) std::swap(incoming,winner);
+            const uint32_t row=incoming.ticket->row;
+            if (row!=UINT32_MAX)
+                blocks[incoming.block].events[row%shards][row/shards].sale.t=invalid_time;
+        }
     }
     for (auto& block:blocks) std::vector<Ticket>().swap(block.tickets[lane]);
 }
@@ -365,14 +371,15 @@ int main(int argc,char** argv) {
         Dimensions dim(input,data);
         Keys users('u'), event_ids('e');
         auto link_blocks=input.chunks(data/"links");
-        auto future_links=std::async(workers>1 ? std::launch::async : std::launch::deferred,
-            [&]{return Identities(link_blocks,users);});
+        std::optional<Identities> identities;
         auto ev=input.chunks(data/"events"), cl=input.chunks(data/"clicks");
         log("map inputs");
         std::vector<EventBlock> raw(ev.size());
         std::vector<Buckets<Click>> clicks(cl.size());
-        parallel(ev.size()+cl.size(),std::max(1U,workers-1),[&](size_t i){
-            if (i<ev.size()) {read_events(ev[i],i,raw[i],dim,users,event_ids,lo,hi);return;}
+        parallel(1+ev.size()+cl.size(),workers,[&](size_t task){
+            if (task==0) {identities.emplace(link_blocks,users); return;}
+            size_t i=task-1;
+            if (i<ev.size()) {read_events(ev[i],raw[i],dim,users,event_ids,lo,hi);return;}
             i-=ev.size();
             scan<4>(cl[i],[&](const auto& f){
                 if (f[0].empty() || f[1].empty()) return;
@@ -383,7 +390,7 @@ int main(int argc,char** argv) {
                 clicks[i][shard(user)].push_back({user,f[0],t,campaign});
             });
         });
-        auto links=future_links.get();
+        const auto& links=identities.value();
         log("parse inputs and link identities");
         parallel(shards,workers,[&](size_t i){dedup(i,raw);});
         log("deduplicate");

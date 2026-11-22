@@ -275,7 +275,18 @@ inline bool equal_key(Key a, Key b) {
     return (a & b & mapped_key) == mapped_key && mapped_value(a) == mapped_value(b);
 }
 inline uint64_t key_hash(Key key) {
-    if ((key & mapped_key) == mapped_key) return std::hash<Text>{}(mapped_value(key));
+    if ((key & mapped_key) == mapped_key) {
+        // Fixed-size mapped IDs permit four independent unaligned loads.
+        // Include every byte; equal_key still resolves every hash collision.
+        const char* data = mapped_value(key).data();
+        uint64_t words[4];
+        std::memcpy(words, data + 1, sizeof(words));
+        const uint64_t left = words[0] * 0x9e3779b185ebca87ULL
+                            + words[1] * 0xc2b2ae3d27d4eb4fULL;
+        const uint64_t right = words[2] * 0x165667b19e3779f9ULL
+                             + words[3] * 0x85ebca77c2b2ae63ULL;
+        key = left ^ ((right << 29) | (right >> 35)) ^ uint8_t(data[0]);
+    }
     key ^= key >> 31;
     key *= 0x9e3779b97f4a7c15ULL;
     return key ^ (key >> 33);
@@ -384,7 +395,9 @@ class Index {
     std::vector<Slot> slots;
     unsigned count=0;
     size_t position(Key k) const {
-        size_t i=key_hash(k)&(slots.size()-1);
+        // The low six hash bits select the raw-ID shard. Inside a shard
+        // they are constant, so use the upper bits for the probe position.
+        size_t i=(key_hash(k)>>6)&(slots.size()-1);
         while (slots[i].key && !equal_key(slots[i].key,k)) i=(i+1)&(slots.size()-1);
         return i;
     }
