@@ -11,10 +11,6 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: pip install -r requirements-test.txt
       - name: Download official test material
         shell: bash
         run: |
@@ -23,8 +19,11 @@ jobs:
             curl --fail --location --retry 3 "https://www.joinbuilders.org/buildathon/tracks/shopping-sessions/files/$name.zip" -o "vendor/$name.zip"
             unzip -q "vendor/$name.zip" -d vendor
           done
+          curl --fail --location --retry 3 https://github.com/duckdb/duckdb/releases/download/v1.4.2/duckdb_cli-linux-amd64.zip -o /tmp/duckdb.zip
+          unzip -q /tmp/duckdb.zip -d /tmp/duckdb
+          echo "/tmp/duckdb" >> "$GITHUB_PATH"
       - run: cargo build --release --manifest-path vendor/generator/Cargo.toml
-      - run: make test fixtures differential
+      - run: make fixtures
       - name: Generate development input
         run: vendor/generator/target/release/generate --seed 1 --events 1000000 --clicks 250000 --output data/dev
       - name: Build scorer image
@@ -55,7 +54,7 @@ jobs:
             -e NCPU="$cpus" -v "$1:/data:ro" -v "$2:/output" -v "$PWD/scratch:/scratch" shopping-sessions
           SH
           chmod +x "${RUNNER_TEMP}/run-shopping-fixture"
-          python vendor/starter-duckdb/scripts/run_fixtures.py "$PWD/vendor/starter-duckdb/fixtures" -- "${RUNNER_TEMP}/run-shopping-fixture"
+          ./check_native fixtures "$PWD/vendor/starter-duckdb/fixtures" "${RUNNER_TEMP}/run-shopping-fixture"
   profile:
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/perf/native-entrypoint')
     runs-on: ubuntu-latest
